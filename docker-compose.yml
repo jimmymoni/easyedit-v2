@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  easyedit-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=False
+      - SONIOX_API_KEY=${SONIOX_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MAX_FILE_SIZE_MB=500
+      - TEMP_FILE_RETENTION_HOURS=24
+      - MIN_CLIP_LENGTH_SECONDS=5
+      - SILENCE_THRESHOLD_DB=-40
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/temp:/app/temp
+      - ./backend/logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  easyedit-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:5000
+    depends_on:
+      - easyedit-backend
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - easyedit-frontend
+      - easyedit-backend
+    restart: unless-stopped
+
+volumes:
+  uploads:
+  temp:
+  logs:

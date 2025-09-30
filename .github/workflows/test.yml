@@ -1,0 +1,276 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: [3.9, 3.10, 3.11]
+
+    services:
+      # If you add a database later, configure it here
+      # postgres:
+      #   image: postgres:13
+      #   env:
+      #     POSTGRES_PASSWORD: postgres
+      #   options: >-
+      #     --health-cmd pg_isready
+      #     --health-interval 10s
+      #     --health-timeout 5s
+      #     --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsndfile1-dev ffmpeg
+
+    - name: Create and activate virtual environment
+      run: |
+        python -m venv venv
+        source venv/bin/activate
+        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
+        echo "$VIRTUAL_ENV/bin" >> $GITHUB_PATH
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r backend/requirements.txt
+        pip install -r backend/tests/requirements-test.txt
+
+    - name: Run backend linting
+      run: |
+        cd backend
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Run backend unit tests
+      env:
+        PYTHONPATH: backend
+        EASYEDIT_TEST_MODE: true
+        EASYEDIT_LOG_LEVEL: INFO
+      run: |
+        cd backend
+        python -m pytest tests/ -v --cov=. --cov-report=xml --cov-report=html
+
+    - name: Run backend integration tests
+      env:
+        PYTHONPATH: backend
+        EASYEDIT_TEST_MODE: true
+        # Add API keys for integration tests (use secrets)
+        # SONIOX_API_KEY: ${{ secrets.SONIOX_API_KEY }}
+        # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        cd backend
+        python -m pytest tests/test_integration.py tests/test_api.py -v
+
+    - name: Upload backend coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage.xml
+        flags: backend
+        name: backend-coverage
+        fail_ci_if_error: false
+
+    - name: Archive backend test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: backend-test-results-py${{ matrix.python-version }}
+        path: |
+          backend/htmlcov/
+          backend/coverage.xml
+          backend/pytest-report.html
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Run frontend linting
+      run: |
+        cd frontend
+        npm run lint
+
+    - name: Run frontend type checking
+      run: |
+        cd frontend
+        npx tsc --noEmit
+
+    - name: Run frontend unit tests
+      run: |
+        cd frontend
+        npm test -- --coverage --reporter=verbose
+
+    - name: Upload frontend coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./frontend/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+        fail_ci_if_error: false
+
+    - name: Archive frontend test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: frontend-test-results-node${{ matrix.node-version }}
+        path: |
+          frontend/coverage/
+          frontend/dist/
+
+  docker-tests:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Build Docker images
+      run: |
+        docker-compose build --no-cache
+
+    - name: Run Docker health checks
+      run: |
+        docker-compose up -d
+        sleep 30
+
+        # Test backend health
+        curl -f http://localhost:5000/health || exit 1
+
+        # Test frontend availability
+        curl -f http://localhost:3000 || exit 1
+
+    - name: Run integration tests in Docker
+      run: |
+        # Run a subset of tests against the dockerized services
+        docker-compose exec -T backend python -m pytest tests/test_api.py -v
+
+    - name: Cleanup Docker
+      if: always()
+      run: |
+        docker-compose down -v
+        docker system prune -af
+
+  security-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run security scanning
+      uses: securecodewarrior/github-action-add-sarif@v1
+      with:
+        sarif-file: 'security-scan.sarif'
+
+    - name: Run dependency vulnerability check
+      run: |
+        # Backend security scan
+        cd backend
+        pip install safety
+        safety check --json || true
+
+        # Frontend security scan
+        cd ../frontend
+        npm audit --audit-level moderate || true
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18.x'
+
+    - name: Install dependencies
+      run: |
+        # Backend
+        python -m venv venv
+        source venv/bin/activate
+        pip install -r backend/requirements.txt
+        pip install pytest-benchmark locust
+
+        # Frontend
+        cd frontend
+        npm ci
+
+    - name: Run backend performance tests
+      run: |
+        source venv/bin/activate
+        cd backend
+        python -m pytest tests/ -k "performance or benchmark" --benchmark-json=benchmark.json
+
+    - name: Run frontend performance tests
+      run: |
+        cd frontend
+        npm run test -- --testPathPattern=performance
+
+    - name: Archive performance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-results
+        path: |
+          backend/benchmark.json
+          frontend/lighthouse-results/
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, docker-tests]
+    if: always()
+
+    steps:
+    - name: Notify on success
+      if: needs.backend-tests.result == 'success' && needs.frontend-tests.result == 'success' && needs.docker-tests.result == 'success'
+      run: |
+        echo "✅ All tests passed successfully!"
+        # Add Slack/Discord notification here if desired
+
+    - name: Notify on failure
+      if: needs.backend-tests.result == 'failure' || needs.frontend-tests.result == 'failure' || needs.docker-tests.result == 'failure'
+      run: |
+        echo "❌ Some tests failed. Check the logs for details."
+        # Add failure notification here if desired
