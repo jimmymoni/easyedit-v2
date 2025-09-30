@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmetml>
+<xmetml version="4">
+    <project>
+        <name>Simple Webinar Recording</name>
+        <children>
+            <sequence id="webinar-seq">
+                <name>Webinar_Jan2024</name>
+                <duration>5400</duration>
+                <rate>
+                    <timebase>23.98</timebase>
+                    <ntsc>TRUE</ntsc>
+                </rate>
+                <format>
+                    <samplecharacteristics>
+                        <rate>
+                            <timebase>23.98</timebase>
+                            <ntsc>TRUE</ntsc>
+                        </rate>
+                        <audio>
+                            <samplerate>44100</samplerate>
+                            <depth>16</depth>
+                        </audio>
+                    </samplecharacteristics>
+                </format>
+                <media>
+                    <audio>
+                        <format>
+                            <samplecharacteristics>
+                                <depth>16</depth>
+                                <samplerate>44100</samplerate>
+                            </samplecharacteristics>
+                        </format>
+                        <track>
+                            <clipitem id="webinar-main">
+                                <name>Webinar_Main_Audio</name>
+                                <enabled>TRUE</enabled>
+                                <duration>5400</duration>
+                                <rate>
+                                    <timebase>23.98</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>5400</end>
+                                <in>0</in>
+                                <out>5400</out>
+                                <file id="webinar-file">
+                                    <name>webinar_recording.wav</name>
+                                    <pathurl>file://localhost/webinars/jan2024_recording.wav</pathurl>
+                                    <rate>
+                                        <timebase>23.98</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>5400</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>16</depth>
+                                                <samplerate>44100</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                    </audio>
+                </media>
+                <timecode>
+                    <rate>
+                        <timebase>23.98</timebase>
+                        <ntsc>TRUE</ntsc>
+                    </rate>
+                    <string>00:00:00:00</string>
+                    <frame>0</frame>
+                </timecode>
+                <!-- Simple content markers -->
+                <marker>
+                    <name>Opening Remarks</name>
+                    <in>0</in>
+                    <out>300</out>
+                </marker>
+                <marker>
+                    <name>Main Presentation</name>
+                    <in>300</in>
+                    <out>4200</out>
+                </marker>
+                <marker>
+                    <name>Q&amp;A Session</name>
+                    <in>4200</in>
+                    <out>5100</out>
+                </marker>
+                <marker>
+                    <name>Closing</name>
+                    <in>5100</in>
+                    <out>5400</out>
+                </marker>
+            </sequence>
+        </children>
+    </project>
+</xmetml>

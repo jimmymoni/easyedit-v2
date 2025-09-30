@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+    <project>
+        <name>Interview Project - DaVinci Resolve 17</name>
+        <children>
+            <sequence id="sequence-1">
+                <name>Interview Timeline</name>
+                <duration>3600</duration>
+                <rate>
+                    <timebase>24</timebase>
+                    <ntsc>FALSE</ntsc>
+                </rate>
+                <format>
+                    <samplecharacteristics>
+                        <rate>
+                            <timebase>24</timebase>
+                            <ntsc>FALSE</ntsc>
+                        </rate>
+                        <width>1920</width>
+                        <height>1080</height>
+                        <anamorphic>FALSE</anamorphic>
+                        <pixelaspectratio>square</pixelaspectratio>
+                        <fielddominance>none</fielddominance>
+                        <colordepth>8</colordepth>
+                        <audio>
+                            <samplerate>48000</samplerate>
+                            <depth>24</depth>
+                        </audio>
+                    </samplecharacteristics>
+                </format>
+                <media>
+                    <audio>
+                        <format>
+                            <samplecharacteristics>
+                                <depth>24</depth>
+                                <samplerate>48000</samplerate>
+                            </samplecharacteristics>
+                        </format>
+                        <track>
+                            <clipitem id="clipitem-1">
+                                <name>Interview_Audio_01</name>
+                                <enabled>TRUE</enabled>
+                                <duration>1800</duration>
+                                <rate>
+                                    <timebase>24</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>1800</end>
+                                <in>0</in>
+                                <out>1800</out>
+                                <file id="file-1">
+                                    <name>interview_part1.wav</name>
+                                    <pathurl>file://localhost/media/interview_part1.wav</pathurl>
+                                    <rate>
+                                        <timebase>24</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>1800</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>24</depth>
+                                                <samplerate>48000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                            <clipitem id="clipitem-2">
+                                <name>Interview_Audio_02</name>
+                                <enabled>TRUE</enabled>
+                                <duration>1800</duration>
+                                <rate>
+                                    <timebase>24</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <start>1800</start>
+                                <end>3600</end>
+                                <in>0</in>
+                                <out>1800</out>
+                                <file id="file-2">
+                                    <name>interview_part2.wav</name>
+                                    <pathurl>file://localhost/media/interview_part2.wav</pathurl>
+                                    <rate>
+                                        <timebase>24</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>1800</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>24</depth>
+                                                <samplerate>48000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Second audio track for background music -->
+                        <track>
+                            <clipitem id="clipitem-3">
+                                <name>Background_Music</name>
+                                <enabled>TRUE</enabled>
+                                <duration>3600</duration>
+                                <rate>
+                                    <timebase>24</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>3600</end>
+                                <in>0</in>
+                                <out>3600</out>
+                                <file id="file-3">
+                                    <name>background_music.wav</name>
+                                    <pathurl>file://localhost/media/background_music.wav</pathurl>
+                                    <rate>
+                                        <timebase>24</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>3600</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>24</depth>
+                                                <samplerate>48000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                                <filter>
+                                    <effect>
+                                        <name>Volume</name>
+                                        <effectid>Volume</effectid>
+                                        <effecttype>filter</effecttype>
+                                        <mediatype>audio</mediatype>
+                                        <parameter>
+                                            <name>Level</name>
+                                            <value>-12</value>
+                                        </parameter>
+                                    </effect>
+                                </filter>
+                            </clipitem>
+                        </track>
+                    </audio>
+                </media>
+                <timecode>
+                    <rate>
+                        <timebase>24</timebase>
+                        <ntsc>FALSE</ntsc>
+                    </rate>
+                    <string>01:00:00:00</string>
+                    <frame>86400</frame>
+                </timecode>
+                <!-- Markers for interview sections -->
+                <marker>
+                    <name>Interview Start</name>
+                    <comment>Beginning of interview</comment>
+                    <in>0</in>
+                    <out>0</out>
+                </marker>
+                <marker>
+                    <name>Question 1</name>
+                    <comment>First interview question</comment>
+                    <in>240</in>
+                    <out>240</out>
+                </marker>
+                <marker>
+                    <name>Question 2</name>
+                    <comment>Second interview question</comment>
+                    <in>900</in>
+                    <out>900</out>
+                </marker>
+                <marker>
+                    <name>Break</name>
+                    <comment>Commercial break</comment>
+                    <in>1800</in>
+                    <out>1920</out>
+                </marker>
+                <marker>
+                    <name>Resume</name>
+                    <comment>Resume after break</comment>
+                    <in>1920</in>
+                    <out>1920</out>
+                </marker>
+            </sequence>
+        </children>
+    </project>
+</xmeml>

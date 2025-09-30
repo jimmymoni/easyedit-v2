@@ -1,0 +1,41 @@
+# Testing Requirements for easyedit-v2
+# Install with: pip install -r requirements-test.txt
+
+# Core testing framework
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+pytest-asyncio>=0.21.0
+
+# Audio processing and testing
+numpy>=1.24.0
+soundfile>=0.12.0
+librosa>=0.10.0
+
+# API testing
+requests>=2.31.0
+requests-mock>=1.11.0
+
+# Mock and patch utilities
+responses>=0.23.0
+
+# Test data generation
+Faker>=19.0.0
+
+# Performance testing
+pytest-benchmark>=4.0.0
+
+# Test reporting
+pytest-html>=3.2.0
+pytest-json-report>=1.5.0
+
+# Code quality
+flake8>=6.0.0
+black>=23.0.0
+
+# Environment variables for testing
+python-dotenv>=1.0.0
+
+# XML parsing and validation
+lxml>=4.9.0
+xmlschema>=2.5.0

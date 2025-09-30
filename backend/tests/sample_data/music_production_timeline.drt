@@ -1,0 +1,495 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+    <project>
+        <name>Music Production - Multi-track Recording</name>
+        <children>
+            <sequence id="sequence-music">
+                <name>Song_Recording_Session</name>
+                <duration>4800</duration>
+                <rate>
+                    <timebase>30</timebase>
+                    <ntsc>TRUE</ntsc>
+                </rate>
+                <format>
+                    <samplecharacteristics>
+                        <rate>
+                            <timebase>30</timebase>
+                            <ntsc>TRUE</ntsc>
+                        </rate>
+                        <width>1920</width>
+                        <height>1080</height>
+                        <anamorphic>FALSE</anamorphic>
+                        <pixelaspectratio>square</pixelaspectratio>
+                        <fielddominance>none</fielddominance>
+                        <colordepth>10</colordepth>
+                        <audio>
+                            <samplerate>96000</samplerate>
+                            <depth>32</depth>
+                        </audio>
+                    </samplecharacteristics>
+                </format>
+                <media>
+                    <audio>
+                        <format>
+                            <samplecharacteristics>
+                                <depth>32</depth>
+                                <samplerate>96000</samplerate>
+                            </samplecharacteristics>
+                        </format>
+                        <!-- Lead Vocals -->
+                        <track>
+                            <clipitem id="clip-vocals-1">
+                                <name>Lead_Vocals_Verse1</name>
+                                <enabled>TRUE</enabled>
+                                <duration>960</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>480</start>
+                                <end>1440</end>
+                                <in>0</in>
+                                <out>960</out>
+                                <file id="file-vocals-v1">
+                                    <name>vocals_verse1.wav</name>
+                                    <pathurl>file://localhost/music/vocals/verse1.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>960</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                            <clipitem id="clip-vocals-2">
+                                <name>Lead_Vocals_Chorus1</name>
+                                <enabled>TRUE</enabled>
+                                <duration>720</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>1440</start>
+                                <end>2160</end>
+                                <in>0</in>
+                                <out>720</out>
+                                <file id="file-vocals-c1">
+                                    <name>vocals_chorus1.wav</name>
+                                    <pathurl>file://localhost/music/vocals/chorus1.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>720</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Backup Vocals -->
+                        <track>
+                            <clipitem id="clip-backups">
+                                <name>Backup_Vocals_Harmony</name>
+                                <enabled>TRUE</enabled>
+                                <duration>1680</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>1440</start>
+                                <end>3120</end>
+                                <in>0</in>
+                                <out>1680</out>
+                                <file id="file-backups">
+                                    <name>backup_vocals.wav</name>
+                                    <pathurl>file://localhost/music/vocals/backup_harmony.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>1680</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                                <filter>
+                                    <effect>
+                                        <name>Reverb</name>
+                                        <effectid>Reverb</effectid>
+                                        <effecttype>filter</effecttype>
+                                        <mediatype>audio</mediatype>
+                                        <parameter>
+                                            <name>Room Size</name>
+                                            <value>0.4</value>
+                                        </parameter>
+                                        <parameter>
+                                            <name>Decay</name>
+                                            <value>2.1</value>
+                                        </parameter>
+                                    </effect>
+                                </filter>
+                            </clipitem>
+                        </track>
+                        <!-- Electric Guitar -->
+                        <track>
+                            <clipitem id="clip-guitar-rhythm">
+                                <name>Electric_Guitar_Rhythm</name>
+                                <enabled>TRUE</enabled>
+                                <duration>4320</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>4320</end>
+                                <in>0</in>
+                                <out>4320</out>
+                                <file id="file-guitar-rhythm">
+                                    <name>guitar_rhythm_track.wav</name>
+                                    <pathurl>file://localhost/music/instruments/guitar_rhythm.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>4320</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Lead Guitar -->
+                        <track>
+                            <clipitem id="clip-guitar-lead">
+                                <name>Electric_Guitar_Lead_Solo</name>
+                                <enabled>TRUE</enabled>
+                                <duration>960</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>2400</start>
+                                <end>3360</end>
+                                <in>0</in>
+                                <out>960</out>
+                                <file id="file-guitar-lead">
+                                    <name>guitar_lead_solo.wav</name>
+                                    <pathurl>file://localhost/music/instruments/guitar_lead.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>960</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Bass Guitar -->
+                        <track>
+                            <clipitem id="clip-bass">
+                                <name>Bass_Guitar_Foundation</name>
+                                <enabled>TRUE</enabled>
+                                <duration>4320</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>4320</end>
+                                <in>0</in>
+                                <out>4320</out>
+                                <file id="file-bass">
+                                    <name>bass_guitar_full.wav</name>
+                                    <pathurl>file://localhost/music/instruments/bass_guitar.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>4320</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Drums - Kick -->
+                        <track>
+                            <clipitem id="clip-drums-kick">
+                                <name>Drums_Kick</name>
+                                <enabled>TRUE</enabled>
+                                <duration>4320</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>4320</end>
+                                <in>0</in>
+                                <out>4320</out>
+                                <file id="file-drums-kick">
+                                    <name>drums_kick.wav</name>
+                                    <pathurl>file://localhost/music/drums/kick.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>4320</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Drums - Snare -->
+                        <track>
+                            <clipitem id="clip-drums-snare">
+                                <name>Drums_Snare</name>
+                                <enabled>TRUE</enabled>
+                                <duration>4320</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>4320</end>
+                                <in>0</in>
+                                <out>4320</out>
+                                <file id="file-drums-snare">
+                                    <name>drums_snare.wav</name>
+                                    <pathurl>file://localhost/music/drums/snare.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>4320</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Drums - Overheads (Stereo) -->
+                        <track>
+                            <clipitem id="clip-drums-overheads">
+                                <name>Drums_Overheads_Stereo</name>
+                                <enabled>TRUE</enabled>
+                                <duration>4320</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>4320</end>
+                                <in>0</in>
+                                <out>4320</out>
+                                <file id="file-drums-overheads">
+                                    <name>drums_overheads.wav</name>
+                                    <pathurl>file://localhost/music/drums/overheads_stereo.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>4320</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Piano/Keyboard -->
+                        <track>
+                            <clipitem id="clip-piano">
+                                <name>Piano_Accompaniment</name>
+                                <enabled>TRUE</enabled>
+                                <duration>2880</duration>
+                                <rate>
+                                    <timebase>30</timebase>
+                                    <ntsc>TRUE</ntsc>
+                                </rate>
+                                <start>960</start>
+                                <end>3840</end>
+                                <in>0</in>
+                                <out>2880</out>
+                                <file id="file-piano">
+                                    <name>piano_track.wav</name>
+                                    <pathurl>file://localhost/music/instruments/piano.wav</pathurl>
+                                    <rate>
+                                        <timebase>30</timebase>
+                                        <ntsc>TRUE</ntsc>
+                                    </rate>
+                                    <duration>2880</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>96000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                    </audio>
+                </media>
+                <timecode>
+                    <rate>
+                        <timebase>30</timebase>
+                        <ntsc>TRUE</ntsc>
+                    </rate>
+                    <string>01:00:00:00</string>
+                    <frame>108000</frame>
+                </timecode>
+                <!-- Song structure markers -->
+                <marker>
+                    <name>Intro</name>
+                    <comment>Song introduction - drums and bass</comment>
+                    <in>0</in>
+                    <out>480</out>
+                </marker>
+                <marker>
+                    <name>Verse 1</name>
+                    <comment>First verse with lead vocals</comment>
+                    <in>480</in>
+                    <out>1440</out>
+                </marker>
+                <marker>
+                    <name>Chorus 1</name>
+                    <comment>First chorus with harmonies</comment>
+                    <in>1440</in>
+                    <out>2160</out>
+                </marker>
+                <marker>
+                    <name>Verse 2</name>
+                    <comment>Second verse</comment>
+                    <in>2160</in>
+                    <out>2880</out>
+                </marker>
+                <marker>
+                    <name>Bridge</name>
+                    <comment>Bridge section</comment>
+                    <in>2880</in>
+                    <out>3360</out>
+                </marker>
+                <marker>
+                    <name>Guitar Solo</name>
+                    <comment>Lead guitar solo section</comment>
+                    <in>2400</in>
+                    <out>3360</out>
+                </marker>
+                <marker>
+                    <name>Final Chorus</name>
+                    <comment>Final chorus with full arrangement</comment>
+                    <in>3360</in>
+                    <out>4320</out>
+                </marker>
+                <marker>
+                    <name>Outro</name>
+                    <comment>Song ending fade</comment>
+                    <in>4320</in>
+                    <out>4800</out>
+                </marker>
+            </sequence>
+        </children>
+    </project>
+</xmeml>

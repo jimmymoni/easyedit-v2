@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+    <project>
+        <name>Podcast Project - DaVinci Resolve 18</name>
+        <children>
+            <sequence id="sequence-podcast">
+                <name>Podcast Episode 42</name>
+                <duration>7200</duration>
+                <rate>
+                    <timebase>25</timebase>
+                    <ntsc>FALSE</ntsc>
+                </rate>
+                <format>
+                    <samplecharacteristics>
+                        <rate>
+                            <timebase>25</timebase>
+                            <ntsc>FALSE</ntsc>
+                        </rate>
+                        <width>1920</width>
+                        <height>1080</height>
+                        <anamorphic>FALSE</anamorphic>
+                        <pixelaspectratio>square</pixelaspectratio>
+                        <fielddominance>none</fielddominance>
+                        <colordepth>8</colordepth>
+                        <audio>
+                            <samplerate>48000</samplerate>
+                            <depth>32</depth>
+                        </audio>
+                    </samplecharacteristics>
+                </format>
+                <media>
+                    <audio>
+                        <format>
+                            <samplecharacteristics>
+                                <depth>32</depth>
+                                <samplerate>48000</samplerate>
+                            </samplecharacteristics>
+                        </format>
+                        <!-- Host microphone -->
+                        <track>
+                            <clipitem id="clip-host-1">
+                                <name>Host_Mic_Recording</name>
+                                <enabled>TRUE</enabled>
+                                <duration>7200</duration>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>7200</end>
+                                <in>0</in>
+                                <out>7200</out>
+                                <file id="file-host">
+                                    <name>host_audio.wav</name>
+                                    <pathurl>file://localhost/podcast/host_audio.wav</pathurl>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>7200</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>48000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                                <filter>
+                                    <effect>
+                                        <name>Dynamics</name>
+                                        <effectid>Dynamics</effectid>
+                                        <effecttype>filter</effecttype>
+                                        <mediatype>audio</mediatype>
+                                        <parameter>
+                                            <name>Compressor</name>
+                                            <value>TRUE</value>
+                                        </parameter>
+                                        <parameter>
+                                            <name>Ratio</name>
+                                            <value>3.0</value>
+                                        </parameter>
+                                        <parameter>
+                                            <name>Threshold</name>
+                                            <value>-18</value>
+                                        </parameter>
+                                    </effect>
+                                </filter>
+                            </clipitem>
+                        </track>
+                        <!-- Guest microphone -->
+                        <track>
+                            <clipitem id="clip-guest-1">
+                                <name>Guest_Mic_Recording</name>
+                                <enabled>TRUE</enabled>
+                                <duration>6000</duration>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <start>600</start>
+                                <end>6600</end>
+                                <in>0</in>
+                                <out>6000</out>
+                                <file id="file-guest">
+                                    <name>guest_audio.wav</name>
+                                    <pathurl>file://localhost/podcast/guest_audio.wav</pathurl>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>6000</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>48000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>1</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                                <filter>
+                                    <effect>
+                                        <name>EQ</name>
+                                        <effectid>EQ</effectid>
+                                        <effecttype>filter</effecttype>
+                                        <mediatype>audio</mediatype>
+                                        <parameter>
+                                            <name>HighPass</name>
+                                            <value>80</value>
+                                        </parameter>
+                                        <parameter>
+                                            <name>LowPass</name>
+                                            <value>15000</value>
+                                        </parameter>
+                                    </effect>
+                                </filter>
+                            </clipitem>
+                        </track>
+                        <!-- Intro/Outro music -->
+                        <track>
+                            <clipitem id="clip-intro">
+                                <name>Intro_Music</name>
+                                <enabled>TRUE</enabled>
+                                <duration>600</duration>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>600</end>
+                                <in>0</in>
+                                <out>600</out>
+                                <file id="file-intro">
+                                    <name>podcast_intro.wav</name>
+                                    <pathurl>file://localhost/podcast/music/intro.wav</pathurl>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>600</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>48000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                            <clipitem id="clip-outro">
+                                <name>Outro_Music</name>
+                                <enabled>TRUE</enabled>
+                                <duration>600</duration>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <start>6600</start>
+                                <end>7200</end>
+                                <in>0</in>
+                                <out>600</out>
+                                <file id="file-outro">
+                                    <name>podcast_outro.wav</name>
+                                    <pathurl>file://localhost/podcast/music/outro.wav</pathurl>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>600</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>48000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                            </clipitem>
+                        </track>
+                        <!-- Background ambience/noise -->
+                        <track>
+                            <clipitem id="clip-ambience">
+                                <name>Room_Ambience</name>
+                                <enabled>TRUE</enabled>
+                                <duration>7200</duration>
+                                <rate>
+                                    <timebase>25</timebase>
+                                    <ntsc>FALSE</ntsc>
+                                </rate>
+                                <start>0</start>
+                                <end>7200</end>
+                                <in>0</in>
+                                <out>7200</out>
+                                <file id="file-ambience">
+                                    <name>room_tone.wav</name>
+                                    <pathurl>file://localhost/podcast/room_tone.wav</pathurl>
+                                    <rate>
+                                        <timebase>25</timebase>
+                                        <ntsc>FALSE</ntsc>
+                                    </rate>
+                                    <duration>7200</duration>
+                                    <media>
+                                        <audio>
+                                            <samplecharacteristics>
+                                                <depth>32</depth>
+                                                <samplerate>48000</samplerate>
+                                            </samplecharacteristics>
+                                            <channelcount>2</channelcount>
+                                        </audio>
+                                    </media>
+                                </file>
+                                <sourcetrack>
+                                    <mediatype>audio</mediatype>
+                                    <trackindex>1</trackindex>
+                                </sourcetrack>
+                                <filter>
+                                    <effect>
+                                        <name>Volume</name>
+                                        <effectid>Volume</effectid>
+                                        <effecttype>filter</effecttype>
+                                        <mediatype>audio</mediatype>
+                                        <parameter>
+                                            <name>Level</name>
+                                            <value>-24</value>
+                                        </parameter>
+                                    </effect>
+                                </filter>
+                            </clipitem>
+                        </track>
+                    </audio>
+                </media>
+                <timecode>
+                    <rate>
+                        <timebase>25</timebase>
+                        <ntsc>FALSE</ntsc>
+                    </rate>
+                    <string>01:00:00:00</string>
+                    <frame>90000</frame>
+                </timecode>
+                <!-- Detailed markers for podcast sections -->
+                <marker>
+                    <name>Intro</name>
+                    <comment>Podcast introduction and theme music</comment>
+                    <in>0</in>
+                    <out>600</out>
+                </marker>
+                <marker>
+                    <name>Guest Introduction</name>
+                    <comment>Introducing today's guest</comment>
+                    <in>600</in>
+                    <out>900</out>
+                </marker>
+                <marker>
+                    <name>Main Discussion</name>
+                    <comment>Core interview content</comment>
+                    <in>900</in>
+                    <out>5400</out>
+                </marker>
+                <marker>
+                    <name>Audience Q&amp;A</name>
+                    <comment>Questions from listeners</comment>
+                    <in>5400</in>
+                    <out>6300</out>
+                </marker>
+                <marker>
+                    <name>Wrap-up</name>
+                    <comment>Final thoughts and next episode preview</comment>
+                    <in>6300</in>
+                    <out>6600</out>
+                </marker>
+                <marker>
+                    <name>Outro</name>
+                    <comment>Closing music and credits</comment>
+                    <in>6600</in>
+                    <out>7200</out>
+                </marker>
+                <!-- Chapter markers for podcast platforms -->
+                <marker>
+                    <name>Chapter 1: Background</name>
+                    <comment>Guest's background and expertise</comment>
+                    <in>900</in>
+                    <out>900</out>
+                </marker>
+                <marker>
+                    <name>Chapter 2: Current Project</name>
+                    <comment>Discussion of guest's current work</comment>
+                    <in>2100</in>
+                    <out>2100</out>
+                </marker>
+                <marker>
+                    <name>Chapter 3: Industry Trends</name>
+                    <comment>Analysis of industry developments</comment>
+                    <in>3600</in>
+                    <out>3600</out>
+                </marker>
+                <marker>
+                    <name>Chapter 4: Audience Questions</name>
+                    <comment>Listener-submitted questions</comment>
+                    <in>5400</in>
+                    <out>5400</out>
+                </marker>
+            </sequence>
+        </children>
+    </project>
+</xmeml>
