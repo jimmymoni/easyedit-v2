@@ -4,14 +4,20 @@ import shutil
 import os
 from unittest.mock import Mock, patch
 import numpy as np
-import librosa
+from scipy.io import wavfile
 
 # Import our application modules
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from models.timeline import Timeline, Track, Clip
-from services.audio_analyzer import AudioAnalyzer
+
+# Try to import AudioAnalyzer, fall back to SimpleAudioAnalyzer if not available
+try:
+    from services.audio_analyzer import AudioAnalyzer
+except ImportError:
+    from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
+
 from services.edit_rules import EditRulesEngine
 from parsers.drt_parser import DRTParser
 from parsers.drt_writer import DRTWriter
@@ -282,12 +288,14 @@ def mock_openai_response():
 # Helper functions for testing
 def create_test_audio_file(temp_dir, filename='test_audio.wav', duration=10.0, sample_rate=22050):
     """Create a test audio file"""
-    audio_data, _ = sample_audio_data()
+    # Generate simple audio data
+    t = np.linspace(0, duration, int(duration * sample_rate))
+    audio_data = 0.3 * np.sin(2 * np.pi * 440 * t)
     file_path = os.path.join(temp_dir, filename)
 
-    # Use librosa to write the audio file
-    import soundfile as sf
-    sf.write(file_path, audio_data, sample_rate)
+    # Convert to int16 and write using scipy
+    audio_int16 = (audio_data * 32767).astype(np.int16)
+    wavfile.write(file_path, sample_rate, audio_int16)
 
     return file_path
 

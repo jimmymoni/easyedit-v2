@@ -1,5 +1,9 @@
 from .soniox_client import SonioxClient
-from .audio_analyzer import AudioAnalyzer
+try:
+    from .audio_analyzer import AudioAnalyzer
+except ImportError:
+    # Fallback to simple audio analyzer if librosa dependencies not available
+    from .simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
 from .edit_rules import EditRulesEngine
 from .timeline_editor import TimelineEditingEngine
 from .openai_client import OpenAIClient

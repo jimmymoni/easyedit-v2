@@ -1,6 +1,5 @@
 from typing import List, Dict, Any, Optional, Tuple
 from models.timeline import Timeline, Track, Clip
-from services.audio_analyzer import AudioAnalyzer
 from services.soniox_client import SonioxClient
 from config import Config
 import logging

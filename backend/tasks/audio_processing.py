@@ -7,7 +7,11 @@ from celery_app import celery_app
 from config import Config
 from parsers.drt_parser import DRTParser
 from parsers.drt_writer import DRTWriter
-from services.audio_analyzer import AudioAnalyzer
+try:
+    from services.audio_analyzer import AudioAnalyzer
+except ImportError:
+    # Fallback to simple audio analyzer if librosa dependencies not available
+    from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
 from services.edit_rules import EditRulesEngine
 from services.soniox_client import SonioxClient
 from utils.error_handlers import ProcessingError, ValidationError

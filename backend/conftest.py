@@ -9,10 +9,10 @@ import tempfile
 import os
 import shutil
 import numpy as np
-import soundfile as sf
+from scipy.io import wavfile
 from pathlib import Path
 
-from models.timeline import Timeline, Track, Clip, Marker
+from models.timeline import Timeline, Track, Clip
 
 
 @pytest.fixture(scope="session")
@@ -41,10 +41,11 @@ def sample_timeline():
 
     timeline.add_track(audio_track)
 
-    # Add some markers
-    timeline.add_marker(Marker("Start", 0.0, "Beginning of timeline"))
-    timeline.add_marker(Marker("Middle", 30.0, "Midpoint"))
-    timeline.add_marker(Marker("End", 60.0, "End of timeline"))
+    # Add some markers (if marker support exists)
+    if hasattr(timeline, 'add_marker'):
+        timeline.add_marker({"name": "Start", "time": 0.0, "comment": "Beginning of timeline"})
+        timeline.add_marker({"name": "Middle", "time": 30.0, "comment": "Midpoint"})
+        timeline.add_marker({"name": "End", "time": 60.0, "comment": "End of timeline"})
 
     return timeline
 
@@ -253,7 +254,12 @@ def create_audio_file(temp_dir):
     """Factory fixture to create audio files for testing"""
     def _create_file(filename, audio_data, sample_rate, format='wav'):
         filepath = os.path.join(temp_dir, filename)
-        sf.write(filepath, audio_data, sample_rate, format=format.upper())
+        # Convert float audio to int16 for WAV files
+        if audio_data.dtype == np.float32 or audio_data.dtype == np.float64:
+            audio_int16 = (audio_data * 32767).astype(np.int16)
+        else:
+            audio_int16 = audio_data
+        wavfile.write(filepath, sample_rate, audio_int16)
         return filepath
 
     return _create_file
