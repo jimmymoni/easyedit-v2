@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, Github, ExternalLink } from 'lucide-react';
+import { Zap, Github, ExternalLink, Shield } from 'lucide-react';
 import FileDropzone from './components/FileDropzone';
 import ProcessingOptions from './components/ProcessingOptions';
 import ProcessingStatus from './components/ProcessingStatus';
 import JobHistory from './components/JobHistory';
+import AuthButton from './components/AuthButton';
+import { useAuth } from './contexts/AuthContext';
 import * as api from './services/api';
 import { ProcessingJob, ProcessingOptions as ProcessingOptionsType } from './types';
 
 function App() {
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+
   // State for file upload
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [drtFile, setDrtFile] = useState<File | null>(null);
@@ -30,11 +34,13 @@ function App() {
   const [jobHistory, setJobHistory] = useState<ProcessingJob[]>([]);
   const [selectedJob, setSelectedJob] = useState<ProcessingJob | null>(null);
 
-  // Load job history on mount
+  // Load job history when authenticated
   useEffect(() => {
-    loadJobHistory();
-    checkBackendHealth();
-  }, []);
+    if (isAuthenticated) {
+      loadJobHistory();
+      checkBackendHealth();
+    }
+  }, [isAuthenticated]);
 
   // Poll current job status
   useEffect(() => {
@@ -156,6 +162,8 @@ function App() {
             </div>
 
             <div className="flex items-center space-x-4">
+              <AuthButton />
+              <div className="border-l border-gray-300 h-6"></div>
               <a
                 href="https://github.com/yourusername/easyedit-v2"
                 target="_blank"
@@ -179,6 +187,25 @@ function App() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {authLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+            <span className="ml-3 text-lg text-gray-600">Loading...</span>
+          </div>
+        ) : !isAuthenticated ? (
+          <div className="text-center py-12">
+            <Shield className="h-24 w-24 text-gray-400 mx-auto mb-6" />
+            <h2 className="text-2xl font-semibold text-gray-900 mb-4">Authentication Required</h2>
+            <p className="text-gray-600 mb-6 max-w-md mx-auto">
+              Please click "Get Demo Token" in the header to authenticate and start using the application.
+            </p>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 max-w-lg mx-auto">
+              <p className="text-yellow-800 text-sm">
+                <strong>For Demo:</strong> This uses a demo token for testing. In production, you would have proper user registration and login.
+              </p>
+            </div>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column - Upload and Options */}
           <div className="space-y-6">
@@ -234,6 +261,7 @@ function App() {
             />
           </div>
         </div>
+        )}
 
         {/* How it Works Section */}
         <div className="mt-12 bg-white rounded-lg border border-gray-200 p-8">

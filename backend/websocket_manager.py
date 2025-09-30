@@ -2,7 +2,8 @@
 WebSocket manager for real-time job status updates
 """
 
-from flask_socketio import SocketIO, emit, join_room, leave_room, request
+from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask import request
 from utils.error_handlers import ValidationError, validate_job_id
 import logging
 import json

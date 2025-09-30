@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiZGVtb191c2VyIiwiZW1haWwiOiJkZW1vQGVhc3llZGl0LmNvbSIsInJvbGUiOiJhZG1pbiIsImFwaV9rZXkiOiJlZXYyX2pJTzNSZTJwXzhqWW9FemlRWUV6aS10dVI3VkE5VFJvNnFDRmhLNjFHYTAiLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzU5MjQ1NTA5LCJleHAiOjE3NTkzMzE5MDksImp0aSI6ImEzNTFjOTk2ZTZmZDU1MTJiZWFiZTI4NDE3ZmEwZmM2In0.fNsQGEiQznsbrfdhUBx1vR-bGsD8eLfzZ6bLKHCLiUY\" http://localhost:5000/status/704fddf4-df37-4d98-b43a-e92dbc09e37f)",
+      "Bash(curl -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiZGVtb191c2VyIiwiZW1haWwiOiJkZW1vQGVhc3llZGl0LmNvbSIsInJvbGUiOiJhZG1pbiIsImFwaV9rZXkiOiJlZXYyX2pJTzNSZTJwXzhqWW9FemlRWUV6aS10dVI3VkE5VFJvNnFDRmhLNjFHYTAiLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzU5MjQ1NTA5LCJleHAiOjE3NTkzMzE5MDksImp0aSI6ImEzNTFjOTk2ZTZmZDU1MTJiZWFiZTI4NDE3ZmEwZmM2In0.fNsQGEiQznsbrfdhUBx1vR-bGsD8eLfzZ6bLKHCLiUY\" -o test_download.drt http://localhost:5000/download/704fddf4-df37-4d98-b43a-e92dbc09e37f)",
+      "Bash(for i in {1..12})",
+      "Bash(do echo \"Request $i:\")",
+      "Bash(curl -w \"\\nStatus: %{http_code}\\n\" http://localhost:5000/auth/demo-token)",
+      "Bash(done)",
+      "Bash(curl http://localhost:5000/auth/demo-token)",
+      "Bash(npm run dev:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<timeline>
+  <rate>
+    <timebase>25</timebase>
+    <ntsc>FALSE</ntsc>
+  </rate>
+  <sequence>
+    <name>Test Timeline</name>
+    <duration>1000</duration>
+    <media>
+      <video>
+        <track>
+          <clipitem id="test-clip">
+            <name>Test Clip</name>
+            <start>0</start>
+            <end>1000</end>
+            <in>0</in>
+            <out>1000</out>
+          </clipitem>
+        </track>
+      </video>
+    </media>
+  </sequence>
+</timeline>
