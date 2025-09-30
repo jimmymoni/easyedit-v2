@@ -132,9 +132,8 @@ def periodic_cleanup():
     cleanup_old_files()
     cleanup_old_jobs()
 
-@app.before_first_request
 def startup():
-    """Initialize app on first request"""
+    """Initialize app on startup"""
     periodic_cleanup()
     logger.info("easyedit-v2 backend started")
 
@@ -641,6 +640,9 @@ def internal_error(error):
     return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == "__main__":
+    # Run startup tasks
+    startup()
+
     # Use SocketIO server for WebSocket support
     if websocket_manager.socketio:
         websocket_manager.socketio.run(app, debug=True, host='0.0.0.0', port=5000)
