@@ -4,11 +4,24 @@ from scipy import signal
 from typing import List, Dict, Any, Optional
 import logging
 import os
+import threading
 
 logger = logging.getLogger(__name__)
 
 class SimpleAudioAnalyzer:
-    """Simplified audio analysis module using scipy and numpy for basic processing"""
+    """
+    SECURITY HARDENED: Simplified audio analysis module using scipy and numpy
+
+    Supports context manager pattern for guaranteed cleanup:
+        with SimpleAudioAnalyzer() as analyzer:
+            analyzer.load_audio('file.mp3')
+            # ... analysis code ...
+        # Automatic cleanup happens here
+    """
+
+    # SECURITY: Global tracking of converted files with thread safety
+    _all_converted_files = set()
+    _converted_files_lock = threading.Lock()
 
     def __init__(self):
         self.audio_data = None
@@ -16,18 +29,41 @@ class SimpleAudioAnalyzer:
         self.file_path = None
         self.sample_rate = 22050
         self.original_sample_rate = None
+        self.converted_file_path = None  # Track converted files for cleanup
+        self._memory_usage_mb = 0
 
     def load_audio(self, file_path: str, target_sr: int = 22050) -> bool:
-        """Load audio file for analysis using scipy"""
+        """Load audio file for analysis using scipy (supports WAV, MP3, M4A, AAC, FLAC via conversion)"""
         try:
             self.file_path = file_path
+            working_file_path = file_path
+
+            # Check if format conversion is needed
+            if not file_path.lower().endswith('.wav'):
+                logger.info(f"Non-WAV format detected, converting to WAV: {file_path}")
+
+                from services.audio_converter import get_converter
+                converter = get_converter()
+
+                # Convert to WAV
+                success, wav_path, error_msg = converter.convert_to_wav(file_path)
+
+                if not success:
+                    logger.error(f"Failed to convert audio file: {error_msg}")
+                    return False
+
+                # Use the converted WAV file for analysis
+                working_file_path = wav_path
+                self.converted_file_path = wav_path
+
+                # SECURITY: Track globally for emergency cleanup
+                with self._converted_files_lock:
+                    self._all_converted_files.add(wav_path)
+
+                logger.info(f"Audio converted successfully: {wav_path}")
 
             # Load audio using scipy.io.wavfile
-            if not file_path.lower().endswith('.wav'):
-                logger.error(f"Only WAV files are supported in simplified mode. Got: {file_path}")
-                return False
-
-            self.original_sample_rate, audio_data = wavfile.read(file_path)
+            self.original_sample_rate, audio_data = wavfile.read(working_file_path)
 
             # Convert to float and normalize
             if audio_data.dtype == np.int16:
@@ -53,7 +89,10 @@ class SimpleAudioAnalyzer:
             self.audio_data = audio_data
             self.duration = len(self.audio_data) / self.sample_rate
 
-            logger.info(f"Audio loaded: {self.duration:.2f}s, {self.sample_rate}Hz")
+            # Track memory usage
+            self._memory_usage_mb = self.audio_data.nbytes / (1024 * 1024)
+
+            logger.info(f"Audio loaded: {self.duration:.2f}s, {self.sample_rate}Hz, {self._memory_usage_mb:.1f}MB RAM")
             return True
 
         except Exception as e:
@@ -316,3 +355,60 @@ class SimpleAudioAnalyzer:
         except Exception as e:
             logger.warning(f"Error generating processing recommendations: {str(e)}")
             return recommendations
+
+    def release_audio_data(self) -> None:
+        """SECURITY: Explicitly release audio data from memory"""
+        if self.audio_data is not None:
+            logger.info(f"Releasing {self._memory_usage_mb:.1f}MB audio data from memory")
+            self.audio_data = None
+            self._memory_usage_mb = 0
+            import gc
+            gc.collect()  # Force garbage collection
+
+    def cleanup(self) -> None:
+        """SECURITY: Clean up resources (converted files and memory)"""
+        # Release audio data from memory
+        self.release_audio_data()
+
+        # Clean up converted files
+        if self.converted_file_path:
+            try:
+                from services.audio_converter import get_converter
+                converter = get_converter()
+
+                # SECURITY: Use lock to prevent race conditions
+                with self._converted_files_lock:
+                    if self.converted_file_path in self._all_converted_files:
+                        converter.cleanup_converted_file(self.converted_file_path)
+                        self._all_converted_files.discard(self.converted_file_path)
+
+                self.converted_file_path = None
+            except Exception as e:
+                logger.warning(f"Error during cleanup: {str(e)}")
+
+    def __enter__(self):
+        """SECURITY: Context manager entry - guaranteed cleanup"""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """SECURITY: Context manager exit - guaranteed cleanup on any exit"""
+        self.cleanup()
+        return False  # Don't suppress exceptions
+
+    @classmethod
+    def cleanup_all_orphaned_files(cls):
+        """SECURITY: Emergency cleanup of all tracked converted files"""
+        with cls._converted_files_lock:
+            orphaned_count = len(cls._all_converted_files)
+            if orphaned_count > 0:
+                logger.warning(f"Emergency cleanup: {orphaned_count} orphaned converted files")
+
+            for file_path in list(cls._all_converted_files):
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        logger.info(f"Emergency cleanup: {file_path}")
+                except Exception as e:
+                    logger.error(f"Emergency cleanup failed for {file_path}: {e}")
+
+            cls._all_converted_files.clear()

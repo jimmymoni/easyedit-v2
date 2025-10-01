@@ -134,6 +134,15 @@ def periodic_cleanup():
 
 def startup():
     """Initialize app on startup"""
+    # Run system dependency checks
+    from utils.system_checks import run_startup_checks
+
+    # Run checks in non-strict mode (ffmpeg is optional, will warn but not fail)
+    checks_passed = run_startup_checks(strict=False, print_output=True)
+
+    if not checks_passed:
+        logger.warning("Some system checks failed - see above for details")
+
     periodic_cleanup()
     logger.info("easyedit-v2 backend started")
 

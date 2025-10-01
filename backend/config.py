@@ -28,6 +28,21 @@ class Config:
     SILENCE_THRESHOLD_DB = int(os.getenv('SILENCE_THRESHOLD_DB', '-40'))
     SPEAKER_CHANGE_THRESHOLD_SECONDS = int(os.getenv('SPEAKER_CHANGE_THRESHOLD_SECONDS', '2'))
 
+    # Audio Conversion Security (SECURITY HARDENED)
+    MAX_AUDIO_CONVERSION_SIZE_MB = int(os.getenv('MAX_AUDIO_CONVERSION_SIZE_MB', '100'))
+    MAX_CONCURRENT_AUDIO_CONVERSIONS = int(os.getenv('MAX_CONCURRENT_AUDIO_CONVERSIONS', '3'))
+    AUDIO_CONVERSION_TIMEOUT_SECONDS = int(os.getenv('AUDIO_CONVERSION_TIMEOUT_SECONDS', '300'))
+    MIN_DISK_SPACE_GB = float(os.getenv('MIN_DISK_SPACE_GB', '2.0'))
+
+    # Format-specific size limits (MB) - prevents resource exhaustion
+    AUDIO_FORMAT_SIZE_LIMITS = {
+        'wav': 100,   # Uncompressed, larger limit
+        'mp3': 50,    # Compressed
+        'm4a': 50,    # Compressed
+        'aac': 50,    # Compressed
+        'flac': 75,   # Lossless compression
+    }
+
     # Upload and Temp Directories
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
     TEMP_FOLDER = os.path.join(os.path.dirname(__file__), 'temp')

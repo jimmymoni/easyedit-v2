@@ -1,4 +1,4 @@
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 import json
 from typing import Dict, Any, Optional
 from models.timeline import Timeline, Track, Clip
@@ -58,12 +58,8 @@ class DRTParser:
             if not xml_content.startswith('<'):
                 raise ValidationError("Content does not appear to be valid XML")
 
-            # Secure XML parsing - disable external entities
-            parser = ET.XMLParser()
-            parser.entity = {}  # Disable entity processing
-
-            # Parse XML securely
-            root = ET.fromstring(xml_content, parser=parser)
+            # Secure XML parsing with defusedxml (automatic XXE protection)
+            root = ET.fromstring(xml_content)
             data = self._xml_to_dict(root)
 
             # Extract timeline information

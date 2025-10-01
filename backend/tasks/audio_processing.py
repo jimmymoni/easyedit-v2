@@ -77,33 +77,35 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
         drt_parser = DRTParser()
         timeline = drt_parser.parse_file(drt_file_path)
 
-        # Load and analyze audio
+        # Load and analyze audio with context manager for guaranteed cleanup
         self.update_state(
             state='PROGRESS',
             meta={'progress': 30, 'message': 'Analyzing audio', 'job_id': job_id}
         )
 
-        audio_analyzer = AudioAnalyzer()
-        if not audio_analyzer.load_audio(audio_file_path):
-            raise ProcessingError("Failed to load audio file")
+        # SECURITY: Use context manager for guaranteed cleanup
+        with AudioAnalyzer() as audio_analyzer:
+            if not audio_analyzer.load_audio(audio_file_path):
+                raise ProcessingError("Failed to load audio file")
 
-        # Get processing options
-        enable_transcription = options.get('enable_transcription', True)
-        enable_speaker_diarization = options.get('enable_speaker_diarization', True)
-        remove_silence = options.get('remove_silence', True)
+            # Get processing options
+            enable_transcription = options.get('enable_transcription', True)
+            enable_speaker_diarization = options.get('enable_speaker_diarization', True)
+            remove_silence = options.get('remove_silence', True)
 
-        # Analyze audio features
-        self.update_state(
-            state='PROGRESS',
-            meta={'progress': 40, 'message': 'Extracting audio features', 'job_id': job_id}
-        )
+            # Analyze audio features
+            self.update_state(
+                state='PROGRESS',
+                meta={'progress': 40, 'message': 'Extracting audio features', 'job_id': job_id}
+            )
 
-        audio_analysis = {
-            'silence_segments': audio_analyzer.detect_silence() if remove_silence else [],
-            'speech_segments': audio_analyzer.detect_speech_segments(),
-            'cut_points': audio_analyzer.find_optimal_cut_points(),
-            'features': audio_analyzer.analyze_audio_features()
-        }
+            audio_analysis = {
+                'silence_segments': audio_analyzer.detect_silence() if remove_silence else [],
+                'speech_segments': audio_analyzer.detect_speech_segments(),
+                'cut_points': audio_analyzer.find_optimal_cut_points(),
+                'features': audio_analyzer.analyze_audio_features()
+            }
+        # Automatic cleanup of audio data and temp files
 
         # Transcription (if enabled and API key available)
         transcription_data = None
@@ -218,42 +220,44 @@ def analyze_audio_task(self, audio_file_path: str, analysis_options: dict):
             meta={'progress': 10, 'message': 'Loading audio file'}
         )
 
-        # Load audio
-        audio_analyzer = AudioAnalyzer()
-        if not audio_analyzer.load_audio(audio_file_path):
-            raise ProcessingError("Failed to load audio file")
+        # SECURITY: Use context manager for guaranteed cleanup
+        with AudioAnalyzer() as audio_analyzer:
+            # Load audio
+            if not audio_analyzer.load_audio(audio_file_path):
+                raise ProcessingError("Failed to load audio file")
 
-        self.update_state(
-            state='PROGRESS',
-            meta={'progress': 50, 'message': 'Analyzing audio features'}
-        )
+            self.update_state(
+                state='PROGRESS',
+                meta={'progress': 50, 'message': 'Analyzing audio features'}
+            )
 
-        # Perform analysis
-        analysis_result = {
-            'basic_features': audio_analyzer.analyze_audio_features(),
-            'summary': audio_analyzer.get_audio_summary()
-        }
+            # Perform analysis
+            analysis_result = {
+                'basic_features': audio_analyzer.analyze_audio_features(),
+                'summary': audio_analyzer.get_audio_summary()
+            }
 
-        # Optional detailed analysis
-        if analysis_options.get('detect_silence', True):
-            analysis_result['silence_segments'] = audio_analyzer.detect_silence()
+            # Optional detailed analysis
+            if analysis_options.get('detect_silence', True):
+                analysis_result['silence_segments'] = audio_analyzer.detect_silence()
 
-        if analysis_options.get('detect_speech', True):
-            analysis_result['speech_segments'] = audio_analyzer.detect_speech_segments()
+            if analysis_options.get('detect_speech', True):
+                analysis_result['speech_segments'] = audio_analyzer.detect_speech_segments()
 
-        if analysis_options.get('find_cut_points', True):
-            analysis_result['cut_points'] = audio_analyzer.find_optimal_cut_points()
+            if analysis_options.get('find_cut_points', True):
+                analysis_result['cut_points'] = audio_analyzer.find_optimal_cut_points()
 
-        self.update_state(
-            state='PROGRESS',
-            meta={'progress': 100, 'message': 'Analysis complete'}
-        )
+            self.update_state(
+                state='PROGRESS',
+                meta={'progress': 100, 'message': 'Analysis complete'}
+            )
 
-        return {
-            'status': 'completed',
-            'analysis': analysis_result,
-            'file_path': audio_file_path
-        }
+            return {
+                'status': 'completed',
+                'analysis': analysis_result,
+                'file_path': audio_file_path
+            }
+        # Automatic cleanup of audio data and temp files
 
     except Exception as e:
         logger.exception(f"Audio analysis failed for {audio_file_path}")

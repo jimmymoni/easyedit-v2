@@ -1,4 +1,5 @@
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # Safe for writing (creating elements)
+from defusedxml import minidom as defused_minidom  # Secure for parsing
 from xml.dom import minidom
 from models.timeline import Timeline, Track, Clip
 from typing import Dict, Any
@@ -251,7 +252,8 @@ class DRTWriter:
     def _prettify_xml(self, element: ET.Element) -> str:
         """Return a pretty-printed XML string for the Element"""
         rough_string = ET.tostring(element, 'unicode')
-        reparsed = minidom.parseString(rough_string)
+        # Use defusedxml for secure parsing
+        reparsed = defused_minidom.parseString(rough_string)
 
         # Add XML declaration and DOCTYPE
         xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>\n'

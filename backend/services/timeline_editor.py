@@ -27,7 +27,7 @@ class TimelineEditingEngine:
         self.drt_parser = DRTParser()
         self.drt_writer = DRTWriter()
         self.soniox_client = SonioxClient() if Config.SONIOX_API_KEY else None
-        self.audio_analyzer = AudioAnalyzer()
+        # Note: AudioAnalyzer now uses context manager - create instances as needed
         self.edit_engine = EditRulesEngine()
 
         self.processing_stats = {}
@@ -197,62 +197,65 @@ class TimelineEditingEngine:
                                options: Dict[str, Any]) -> Dict[str, Any]:
         """Perform comprehensive audio analysis"""
         try:
-            # Load audio
-            success = self.audio_analyzer.load_audio(audio_file_path)
-            if not success:
-                return {
-                    'success': False,
-                    'error': 'Failed to load audio file'
+            # SECURITY: Use context manager for guaranteed cleanup
+            with AudioAnalyzer() as audio_analyzer:
+                # Load audio
+                success = audio_analyzer.load_audio(audio_file_path)
+                if not success:
+                    return {
+                        'success': False,
+                        'error': 'Failed to load audio file'
+                    }
+
+                # Get basic features
+                features = audio_analyzer.analyze_audio_features()
+
+                # Detect speech and silence
+                silence_segments = []
+                speech_segments = []
+
+                if options.get('remove_silence', True):
+                    silence_segments = audio_analyzer.detect_silence(
+                        silence_threshold_db=options.get('silence_threshold_db', Config.SILENCE_THRESHOLD_DB)
+                    )
+
+                speech_segments = audio_analyzer.detect_speech_segments()
+
+                # Find optimal cut points
+                cut_points = []
+                if options.get('energy_based_cutting', True):
+                    cut_points = audio_analyzer.find_optimal_cut_points(
+                        min_segment_duration=options.get('min_clip_length', Config.MIN_CLIP_LENGTH_SECONDS)
+                    )
+
+                # Get processing recommendations
+                recommendations = audio_analyzer._get_processing_recommendations()
+
+                analysis_data = {
+                    'features': features,
+                    'silence_segments': silence_segments,
+                    'speech_segments': speech_segments,
+                    'cut_points': cut_points,
+                    'recommendations': recommendations,
+                    'audio_duration': audio_analyzer.duration,
+                    'sample_rate': audio_analyzer.sample_rate
                 }
 
-            # Get basic features
-            features = self.audio_analyzer.analyze_audio_features()
+                stats = {
+                    'audio_duration': audio_analyzer.duration,
+                    'silence_segments_count': len(silence_segments),
+                    'speech_segments_count': len(speech_segments),
+                    'cut_points_count': len(cut_points),
+                    'dynamic_range_db': features.get('dynamic_range_db', 0),
+                    'avg_db': features.get('avg_db', 0)
+                }
 
-            # Detect speech and silence
-            silence_segments = []
-            speech_segments = []
-
-            if options.get('remove_silence', True):
-                silence_segments = self.audio_analyzer.detect_silence(
-                    silence_threshold_db=options.get('silence_threshold_db', Config.SILENCE_THRESHOLD_DB)
-                )
-
-            speech_segments = self.audio_analyzer.detect_speech_segments()
-
-            # Find optimal cut points
-            cut_points = []
-            if options.get('energy_based_cutting', True):
-                cut_points = self.audio_analyzer.find_optimal_cut_points(
-                    min_segment_duration=options.get('min_clip_length', Config.MIN_CLIP_LENGTH_SECONDS)
-                )
-
-            # Get processing recommendations
-            recommendations = self.audio_analyzer._get_processing_recommendations()
-
-            analysis_data = {
-                'features': features,
-                'silence_segments': silence_segments,
-                'speech_segments': speech_segments,
-                'cut_points': cut_points,
-                'recommendations': recommendations,
-                'audio_duration': self.audio_analyzer.duration,
-                'sample_rate': self.audio_analyzer.sample_rate
-            }
-
-            stats = {
-                'audio_duration': self.audio_analyzer.duration,
-                'silence_segments_count': len(silence_segments),
-                'speech_segments_count': len(speech_segments),
-                'cut_points_count': len(cut_points),
-                'dynamic_range_db': features.get('dynamic_range_db', 0),
-                'avg_db': features.get('avg_db', 0)
-            }
-
-            return {
-                'success': True,
-                'data': analysis_data,
-                'stats': stats
-            }
+                return {
+                    'success': True,
+                    'data': analysis_data,
+                    'stats': stats
+                }
+            # Automatic cleanup happens here
 
         except Exception as e:
             logger.error(f"Audio analysis failed: {str(e)}")
@@ -466,28 +469,31 @@ class TimelineEditingEngine:
             timeline = self.drt_parser.parse_file(drt_file_path)
             timeline_stats = timeline.get_timeline_stats()
 
-            # Basic audio analysis
-            self.audio_analyzer.load_audio(audio_file_path)
-            audio_summary = self.audio_analyzer.get_audio_summary()
+            # SECURITY: Use context manager for guaranteed cleanup
+            with AudioAnalyzer() as audio_analyzer:
+                # Basic audio analysis
+                audio_analyzer.load_audio(audio_file_path)
+                audio_summary = audio_analyzer.get_audio_summary()
 
-            # Estimate processing impact
-            estimated_cuts = len(audio_summary.get('silence_segments', []))
-            estimated_duration_reduction = sum(
-                seg.get('duration', 0) for seg in audio_summary.get('silence_segments', [])
-            )
+                # Estimate processing impact
+                estimated_cuts = len(audio_summary.get('silence_segments', []))
+                estimated_duration_reduction = sum(
+                    seg.get('duration', 0) for seg in audio_summary.get('silence_segments', [])
+                )
 
-            return {
-                'success': True,
-                'preview': {
-                    'original_timeline': timeline_stats,
-                    'audio_analysis': audio_summary,
-                    'estimated_changes': {
-                        'silence_segments_to_remove': estimated_cuts,
-                        'estimated_duration_reduction_seconds': estimated_duration_reduction,
-                        'estimated_compression_ratio': (timeline_stats['total_duration'] - estimated_duration_reduction) / timeline_stats['total_duration'] if timeline_stats['total_duration'] > 0 else 1.0
+                return {
+                    'success': True,
+                    'preview': {
+                        'original_timeline': timeline_stats,
+                        'audio_analysis': audio_summary,
+                        'estimated_changes': {
+                            'silence_segments_to_remove': estimated_cuts,
+                            'estimated_duration_reduction_seconds': estimated_duration_reduction,
+                            'estimated_compression_ratio': (timeline_stats['total_duration'] - estimated_duration_reduction) / timeline_stats['total_duration'] if timeline_stats['total_duration'] > 0 else 1.0
+                        }
                     }
                 }
-            }
+            # Automatic cleanup happens here
 
         except Exception as e:
             logger.error(f"Preview generation failed: {str(e)}")

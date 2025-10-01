@@ -7,9 +7,12 @@ Werkzeug==3.0.1
 # Security and validation
 python-dotenv==1.0.0
 requests==2.31.0
+defusedxml==0.7.1
+python-magic==0.4.27
 
 # Audio processing
 pydub==0.25.1
+pyaudioop==0.3.4
 numpy==1.26.2
 scipy==1.11.4
 librosa==0.10.1

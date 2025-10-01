@@ -60,9 +60,28 @@ def start_worker():
             ]
 
             print(f"Starting {worker['name']} worker...")
-            proc = subprocess.Popen(cmd)
-            processes.append(proc)
-            time.sleep(2)  # Stagger startup
+
+            # SECURITY: Explicit security parameters
+            # - shell=False: Prevent shell injection (command is list, not string)
+            # - env: Use clean copy of environment
+            safe_env = os.environ.copy()
+
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    shell=False,  # CRITICAL: Prevent shell injection
+                    env=safe_env,
+                    stdin=subprocess.DEVNULL,  # No input needed
+                    # stdout/stderr inherit for logging
+                )
+                processes.append(proc)
+                time.sleep(2)  # Stagger startup
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"ERROR: Failed to start {worker['name']}: {e}")
+                # Terminate already-started workers on failure
+                for proc in processes:
+                    proc.terminate()
+                sys.exit(1)
 
         # Wait for all workers
         try:
