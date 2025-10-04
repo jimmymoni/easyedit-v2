@@ -46,13 +46,13 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
+    <div className="bg-card rounded-xl border border-border/80 shadow-sm hover:shadow-md transition-shadow duration-200 p-6">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-3">
           {getStatusIcon()}
           <div>
-            <h3 className="text-lg font-medium text-gray-900">Processing Status</h3>
-            <p className="text-sm text-gray-500">Job ID: {job.job_id}</p>
+            <h3 className="text-lg font-semibold text-foreground tracking-tight">Processing Status</h3>
+            <p className="text-sm text-muted-foreground font-mono">Job ID: {job.job_id}</p>
           </div>
         </div>
         <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor()}`}>
@@ -73,33 +73,33 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
 
       {/* Status Message */}
       <div className="mb-4">
-        <p className="text-sm text-gray-700">{job.message}</p>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-foreground">{job.message}</p>
+        <p className="text-xs text-muted-foreground mt-1">
           Created: {new Date(job.created_at).toLocaleString()}
         </p>
       </div>
 
       {/* Processing Statistics */}
       {job.stats && (
-        <div className="border-t border-gray-200 pt-4">
+        <div className="border-t border-border pt-4">
           <div className="flex items-center space-x-2 mb-3">
-            <BarChart3 className="h-4 w-4 text-gray-600" />
-            <h4 className="text-sm font-medium text-gray-900">Processing Results</h4>
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            <h4 className="text-sm font-semibold text-foreground">Processing Results</h4>
           </div>
 
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div className="space-y-2">
               <div className="flex justify-between">
-                <span className="text-gray-600">Original Duration:</span>
-                <span className="font-medium">{formatDuration(job.stats.original_duration)}</span>
+                <span className="text-muted-foreground">Original Duration:</span>
+                <span className="font-medium text-foreground">{formatDuration(job.stats.original_duration)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Edited Duration:</span>
-                <span className="font-medium">{formatDuration(job.stats.edited_duration)}</span>
+                <span className="text-muted-foreground">Edited Duration:</span>
+                <span className="font-medium text-foreground">{formatDuration(job.stats.edited_duration)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Time Saved:</span>
-                <span className="font-medium text-green-600">
+                <span className="text-muted-foreground">Time Saved:</span>
+                <span className="font-medium text-primary">
                   {formatDuration(job.stats.duration_reduction)}
                 </span>
               </div>
@@ -107,16 +107,16 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
 
             <div className="space-y-2">
               <div className="flex justify-between">
-                <span className="text-gray-600">Original Clips:</span>
-                <span className="font-medium">{job.stats.original_clips}</span>
+                <span className="text-muted-foreground">Original Clips:</span>
+                <span className="font-medium text-foreground">{job.stats.original_clips}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Edited Clips:</span>
-                <span className="font-medium">{job.stats.edited_clips}</span>
+                <span className="text-muted-foreground">Edited Clips:</span>
+                <span className="font-medium text-foreground">{job.stats.edited_clips}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Compression:</span>
-                <span className="font-medium text-blue-600">
+                <span className="text-muted-foreground">Compression:</span>
+                <span className="font-medium text-primary">
                   {formatPercentage(job.stats.compression_ratio)}
                 </span>
               </div>
@@ -124,19 +124,19 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
           </div>
 
           {/* Additional Stats */}
-          <div className="mt-3 pt-3 border-t border-gray-100">
+          <div className="mt-3 pt-3 border-t border-border">
             <div className="flex justify-between items-center text-sm">
-              <span className="text-gray-600">Tracks Processed:</span>
-              <span className="font-medium">{job.stats.tracks_processed}</span>
+              <span className="text-muted-foreground">Tracks Processed:</span>
+              <span className="font-medium text-foreground">{job.stats.tracks_processed}</span>
             </div>
             {job.stats.markers_added > 0 && (
               <div className="flex justify-between items-center text-sm mt-1">
-                <span className="text-gray-600">Markers Added:</span>
-                <span className="font-medium">{job.stats.markers_added}</span>
+                <span className="text-muted-foreground">Markers Added:</span>
+                <span className="font-medium text-foreground">{job.stats.markers_added}</span>
               </div>
             )}
             {job.transcription_available && (
-              <div className="flex items-center text-sm mt-2 text-green-600">
+              <div className="flex items-center text-sm mt-2 text-primary">
                 <CheckCircle className="h-3 w-3 mr-1" />
                 <span>AI transcription completed</span>
               </div>
@@ -147,10 +147,10 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
 
       {/* Download Button */}
       {job.status === 'completed' && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
+        <div className="mt-4 pt-4 border-t border-border">
           <button
             onClick={() => onDownload(job.job_id)}
-            className="w-full flex items-center justify-center space-x-2 bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-md transition-colors"
+            className="w-full flex items-center justify-center space-x-2 bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2.5 rounded-lg font-medium transition-colors"
           >
             <Download className="h-4 w-4" />
             <span>Download Edited Timeline (.drt)</span>
@@ -160,8 +160,8 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
 
       {/* Error Details */}
       {job.status === 'failed' && (
-        <div className="mt-4 p-3 bg-red-50 rounded-md">
-          <p className="text-sm text-red-800">
+        <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+          <p className="text-sm text-destructive">
             Processing failed. Please check your files and try again.
           </p>
         </div>

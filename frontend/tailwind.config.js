@@ -7,6 +7,10 @@ export default {
   ],
   theme: {
   	extend: {
+  		fontFamily: {
+  			sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+  			mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+  		},
   		colors: {
   			primary: {
   				'50': '#f0f9ff',

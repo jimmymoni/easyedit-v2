@@ -44,10 +44,10 @@ export default function TimelineUploadZone({ drtFile, onFileSelected }: Timeline
       className={`
         relative cursor-pointer transition-all duration-200 border
         ${isDragActive
-          ? 'border-primary bg-primary/5 shadow-md'
+          ? 'border-primary bg-primary/5 shadow-lg shadow-primary/20'
           : drtFile
-          ? 'border-border bg-card hover:bg-accent/50'
-          : 'border-dashed border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-accent/30'
+          ? 'border-border bg-card hover:bg-accent/50 shadow-sm hover:shadow-md'
+          : 'border-dashed border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-accent/30 hover:shadow-sm'
         }
       `}
     >
@@ -79,13 +79,14 @@ export default function TimelineUploadZone({ drtFile, onFileSelected }: Timeline
           </div>
         </div>
       ) : (
-        <div className="p-6 text-center">
-          <FileVideo className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-          <p className="text-sm font-medium text-foreground mb-1">
-            {isDragActive ? 'Drop timeline file' : 'Timeline'}
+        <div className="p-8 text-center min-h-[180px] flex flex-col items-center justify-center">
+          <FileVideo className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
+          <p className="text-sm font-medium text-foreground mb-1.5">
+            {isDragActive ? 'Drop timeline file' : 'Timeline File'}
           </p>
-          <p className="text-xs text-muted-foreground">
-            DRT, XML
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Drag & drop or click to upload<br />
+            <span className="text-muted-foreground/70">DRT, XML</span>
           </p>
         </div>
       )}

@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Zap, Github, ExternalLink, Shield } from 'lucide-react';
 import AudioUploadZone from './components/AudioUploadZone';
 import TimelineUploadZone from './components/TimelineUploadZone';
-import ProcessingOptions from './components/ProcessingOptions';
+import ProcessingOptionsTable from './components/ProcessingOptionsTable';
 import ProcessingStatus from './components/ProcessingStatus';
-import JobHistory from './components/JobHistory';
+import JobHistoryDropdown from './components/JobHistoryDropdown';
 import AuthButton from './components/AuthButton';
 import { useAuth } from './contexts/AuthContext';
 import * as api from './services/api';
@@ -152,27 +152,37 @@ function App() {
   const canStartProcessing = audioFile && drtFile && !isUploading && !isPolling;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
+      <header className="bg-card shadow-sm border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-3">
-              <Zap className="h-8 w-8 text-primary-600" />
+              <Zap className="h-7 w-7 text-primary" />
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">EasyEdit v2</h1>
-                <p className="text-sm text-gray-500">AI-Powered Timeline Editor for DaVinci Resolve</p>
+                <h1 className="text-xl font-semibold text-foreground tracking-tight">EasyEdit v2</h1>
+                <p className="text-xs text-muted-foreground font-medium">AI-Powered Timeline Editor</p>
               </div>
             </div>
 
             <div className="flex items-center space-x-4">
+              {isAuthenticated && (
+                <>
+                  <JobHistoryDropdown
+                    jobs={jobHistory}
+                    onDownload={handleDownload}
+                    onViewDetails={setSelectedJob}
+                  />
+                  <div className="border-l border-border h-6"></div>
+                </>
+              )}
               <AuthButton />
-              <div className="border-l border-gray-300 h-6"></div>
+              <div className="border-l border-border h-6"></div>
               <a
                 href="https://github.com/yourusername/easyedit-v2"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-gray-500 hover:text-gray-700"
+                className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Github className="h-5 w-5" />
               </a>
@@ -180,7 +190,7 @@ function App() {
                 href="https://www.blackmagicdesign.com/products/davinciresolve"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-gray-500 hover:text-gray-700"
+                className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 <ExternalLink className="h-5 w-5" />
               </a>
@@ -190,114 +200,106 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {authLoading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-            <span className="ml-3 text-lg text-gray-600">Loading...</span>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+            <span className="ml-3 text-lg text-muted-foreground">Loading...</span>
           </div>
         ) : !isAuthenticated ? (
-          <div className="text-center py-12">
-            <Shield className="h-24 w-24 text-gray-400 mx-auto mb-6" />
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">Authentication Required</h2>
-            <p className="text-gray-600 mb-6 max-w-md mx-auto">
+          <div className="text-center py-16">
+            <Shield className="h-16 w-16 text-muted-foreground/40 mx-auto mb-6" />
+            <h2 className="text-3xl font-bold text-foreground mb-3 tracking-tight">Authentication Required</h2>
+            <p className="text-muted-foreground text-base mb-8 max-w-md mx-auto leading-relaxed">
               Please click "Get Demo Token" in the header to authenticate and start using the application.
             </p>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 max-w-lg mx-auto">
-              <p className="text-yellow-800 text-sm">
-                <strong>For Demo:</strong> This uses a demo token for testing. In production, you would have proper user registration and login.
+            <div className="bg-primary/5 border border-primary/10 rounded-xl p-5 max-w-lg mx-auto">
+              <p className="text-foreground text-sm leading-relaxed">
+                <strong className="font-semibold">For Demo:</strong> This uses a demo token for testing. In production, you would have proper user registration and login.
               </p>
             </div>
           </div>
         ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column - Upload and Options */}
-          <div className="space-y-6">
-            {/* File Upload - Side by Side */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <AudioUploadZone
-                audioFile={audioFile}
-                onFileSelected={handleAudioSelected}
-              />
-              <TimelineUploadZone
-                drtFile={drtFile}
-                onFileSelected={handleDrtSelected}
-              />
-            </div>
-
-            {/* Processing Options */}
-            <ProcessingOptions
-              options={processingOptions}
-              onOptionsChange={setProcessingOptions}
-              disabled={isUploading || isPolling}
+        <div className="max-w-5xl mx-auto space-y-8">
+          {/* File Upload - Side by Side */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <AudioUploadZone
+              audioFile={audioFile}
+              onFileSelected={handleAudioSelected}
             />
-
-            {/* Process Button */}
-            <button
-              onClick={handleUploadAndProcess}
-              disabled={!canStartProcessing}
-              className={`
-                w-full py-3 px-4 rounded-lg font-medium text-white transition-colors
-                ${canStartProcessing
-                  ? 'bg-primary-600 hover:bg-primary-700'
-                  : 'bg-gray-400 cursor-not-allowed'
-                }
-              `}
-            >
-              {isUploading ? 'Uploading...' : 'Upload & Process Timeline'}
-            </button>
+            <TimelineUploadZone
+              drtFile={drtFile}
+              onFileSelected={handleDrtSelected}
+            />
           </div>
 
-          {/* Right Column - Status and History */}
-          <div className="space-y-6">
-            {/* Current Job Status */}
-            {currentJob && (
-              <ProcessingStatus
-                job={selectedJob || currentJob}
-                onDownload={handleDownload}
-              />
-            )}
+          {/* Processing Options */}
+          <ProcessingOptionsTable
+            options={processingOptions}
+            onOptionsChange={setProcessingOptions}
+            disabled={isUploading || isPolling}
+          />
 
-            {/* Job History */}
-            <JobHistory
-              jobs={jobHistory}
+          {/* Process Button */}
+          <button
+            onClick={handleUploadAndProcess}
+            disabled={!canStartProcessing}
+            className={`
+              w-full py-3 px-4 rounded-lg font-medium transition-colors
+              ${canStartProcessing
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : 'bg-muted text-muted-foreground cursor-not-allowed'
+              }
+            `}
+          >
+            {isUploading ? 'Uploading...' : 'Upload & Process Timeline'}
+          </button>
+
+          {/* Current Job Status */}
+          {currentJob && (
+            <ProcessingStatus
+              job={selectedJob || currentJob}
               onDownload={handleDownload}
-              onViewDetails={setSelectedJob}
             />
-          </div>
+          )}
         </div>
         )}
 
         {/* How it Works Section */}
-        <div className="mt-12 bg-white rounded-lg border border-gray-200 p-8">
-          <h2 className="text-2xl font-semibold text-gray-900 mb-6">How It Works</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="mt-20 max-w-5xl mx-auto bg-gradient-to-br from-card via-card to-accent/5 rounded-2xl border border-border/80 shadow-lg p-8 lg:p-12">
+          <h2 className="text-3xl font-bold text-foreground mb-3 tracking-tight text-center">
+            How It Works
+          </h2>
+          <p className="text-center text-muted-foreground mb-10 max-w-2xl mx-auto">
+            Three simple steps to automated timeline editing
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8">
             <div className="text-center">
-              <div className="bg-primary-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl font-bold text-primary-600">1</span>
+              <div className="bg-primary/10 rounded-full w-14 h-14 flex items-center justify-center mx-auto mb-5">
+                <span className="text-xl font-bold text-primary">1</span>
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Upload Files</h3>
-              <p className="text-gray-600 text-sm">
+              <h3 className="font-semibold text-foreground mb-2.5 text-base">Upload Files</h3>
+              <p className="text-muted-foreground text-sm leading-relaxed">
                 Upload your audio file and DaVinci Resolve timeline (.drt) file. We support various audio formats including WAV, MP3, and M4A.
               </p>
             </div>
 
             <div className="text-center">
-              <div className="bg-primary-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl font-bold text-primary-600">2</span>
+              <div className="bg-primary/10 rounded-full w-14 h-14 flex items-center justify-center mx-auto mb-5">
+                <span className="text-xl font-bold text-primary">2</span>
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">AI Processing</h3>
-              <p className="text-gray-600 text-sm">
+              <h3 className="font-semibold text-foreground mb-2.5 text-base">AI Processing</h3>
+              <p className="text-muted-foreground text-sm leading-relaxed">
                 Our AI analyzes your audio using Soniox API for transcription, detects speakers, removes silence, and applies intelligent editing rules.
               </p>
             </div>
 
             <div className="text-center">
-              <div className="bg-primary-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl font-bold text-primary-600">3</span>
+              <div className="bg-primary/10 rounded-full w-14 h-14 flex items-center justify-center mx-auto mb-5">
+                <span className="text-xl font-bold text-primary">3</span>
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">Download & Import</h3>
-              <p className="text-gray-600 text-sm">
+              <h3 className="font-semibold text-foreground mb-2.5 text-base">Download & Import</h3>
+              <p className="text-muted-foreground text-sm leading-relaxed">
                 Download your optimized .drt timeline file and import it directly into DaVinci Resolve to continue editing with pre-cut segments.
               </p>
             </div>
@@ -306,11 +308,11 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="mt-12 bg-white border-t border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="text-center text-gray-500 text-sm">
-            <p>© 2024 EasyEdit v2. Built for video editors, powered by AI.</p>
-            <p className="mt-2">
+      <footer className="mt-20 bg-card border-t border-border">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="text-center text-muted-foreground text-sm">
+            <p className="font-medium">© 2024 EasyEdit v2. Built for video editors, powered by AI.</p>
+            <p className="mt-2.5 text-xs">
               Uses Soniox API for transcription and OpenAI for enhancement features.
             </p>
           </div>

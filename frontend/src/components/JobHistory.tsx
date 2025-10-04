@@ -50,12 +50,12 @@ const JobHistory: React.FC<JobHistoryProps> = ({ jobs, onDownload, onViewDetails
 
   if (jobs.length === 0) {
     return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-lg font-medium text-gray-900 mb-2">Processing History</h3>
+      <div className="bg-card rounded-xl border border-border p-6">
+        <h3 className="text-lg font-semibold text-foreground mb-2 tracking-tight">Processing History</h3>
         <div className="text-center py-8">
-          <Clock className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-2 text-sm font-medium text-gray-900">No jobs yet</h3>
-          <p className="mt-1 text-sm text-gray-500">
+          <Clock className="mx-auto h-12 w-12 text-muted-foreground/40" />
+          <h3 className="mt-2 text-sm font-medium text-foreground">No jobs yet</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
             Upload and process your first timeline to get started.
           </p>
         </div>
@@ -64,37 +64,37 @@ const JobHistory: React.FC<JobHistoryProps> = ({ jobs, onDownload, onViewDetails
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200">
-      <div className="p-6 border-b border-gray-200">
-        <h3 className="text-lg font-medium text-gray-900">Processing History</h3>
-        <p className="text-sm text-gray-500">Recent timeline processing jobs</p>
+    <div className="bg-card rounded-xl border border-border/80 shadow-sm hover:shadow-md transition-shadow duration-200">
+      <div className="p-6 border-b border-border">
+        <h3 className="text-lg font-semibold text-foreground tracking-tight">Processing History</h3>
+        <p className="text-sm text-muted-foreground">Recent timeline processing jobs</p>
       </div>
 
-      <div className="divide-y divide-gray-200">
+      <div className="divide-y divide-border">
         {jobs.map((job) => (
-          <div key={job.job_id} className="p-6 hover:bg-gray-50 transition-colors">
+          <div key={job.job_id} className="p-6 hover:bg-accent/30 transition-colors">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3 flex-1">
                 {getStatusIcon(job.status)}
                 <div className="flex-1">
                   <div className="flex items-center space-x-2">
-                    <h4 className="text-sm font-medium text-gray-900">
+                    <h4 className="text-sm font-medium text-foreground">
                       Job #{job.job_id.slice(-8)}
                     </h4>
                     <span className={`
                       px-2 py-1 rounded-full text-xs font-medium
-                      ${job.status === 'completed' ? 'bg-green-100 text-green-800' : ''}
-                      ${job.status === 'failed' ? 'bg-red-100 text-red-800' : ''}
-                      ${job.status === 'processing' ? 'bg-blue-100 text-blue-800' : ''}
-                      ${job.status === 'uploaded' ? 'bg-gray-100 text-gray-800' : ''}
+                      ${job.status === 'completed' ? 'bg-primary/10 text-primary' : ''}
+                      ${job.status === 'failed' ? 'bg-destructive/10 text-destructive' : ''}
+                      ${job.status === 'processing' ? 'bg-primary/10 text-primary' : ''}
+                      ${job.status === 'uploaded' ? 'bg-muted text-muted-foreground' : ''}
                     `}>
                       {job.status}
                     </span>
                   </div>
 
-                  <p className="text-sm text-gray-500 mt-1">{job.message}</p>
+                  <p className="text-sm text-muted-foreground mt-1">{job.message}</p>
 
-                  <div className="flex items-center space-x-4 mt-2 text-xs text-gray-500">
+                  <div className="flex items-center space-x-4 mt-2 text-xs text-muted-foreground">
                     <span>{formatDate(job.created_at)}</span>
                     {job.stats && (
                       <>
@@ -111,7 +111,7 @@ const JobHistory: React.FC<JobHistoryProps> = ({ jobs, onDownload, onViewDetails
                     {job.transcription_available && (
                       <>
                         <span>•</span>
-                        <span className="text-green-600">AI Transcribed</span>
+                        <span className="text-primary">AI Transcribed</span>
                       </>
                     )}
                   </div>
@@ -119,13 +119,13 @@ const JobHistory: React.FC<JobHistoryProps> = ({ jobs, onDownload, onViewDetails
                   {/* Progress Bar for Processing Jobs */}
                   {job.status === 'processing' && (
                     <div className="mt-2">
-                      <div className="flex justify-between text-xs text-gray-500 mb-1">
+                      <div className="flex justify-between text-xs text-muted-foreground mb-1">
                         <span>Progress</span>
                         <span>{job.progress}%</span>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-1">
+                      <div className="w-full bg-muted rounded-full h-1">
                         <div
-                          className="bg-blue-500 h-1 rounded-full transition-all duration-300"
+                          className="bg-primary h-1 rounded-full transition-all duration-300"
                           style={{ width: `${job.progress}%` }}
                         />
                       </div>
@@ -137,7 +137,7 @@ const JobHistory: React.FC<JobHistoryProps> = ({ jobs, onDownload, onViewDetails
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => onViewDetails(job)}
-                  className="text-gray-400 hover:text-gray-600 p-1"
+                  className="text-muted-foreground hover:text-foreground p-1 transition-colors"
                   title="View details"
                 >
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -148,7 +148,7 @@ const JobHistory: React.FC<JobHistoryProps> = ({ jobs, onDownload, onViewDetails
                 {job.status === 'completed' && (
                   <button
                     onClick={() => onDownload(job.job_id)}
-                    className="text-primary-600 hover:text-primary-700 p-1"
+                    className="text-primary hover:text-primary/80 p-1 transition-colors"
                     title="Download result"
                   >
                     <Download className="h-4 w-4" />
@@ -161,8 +161,8 @@ const JobHistory: React.FC<JobHistoryProps> = ({ jobs, onDownload, onViewDetails
       </div>
 
       {jobs.length > 5 && (
-        <div className="p-4 border-t border-gray-200 text-center">
-          <button className="text-sm text-primary-600 hover:text-primary-700">
+        <div className="p-4 border-t border-border text-center">
+          <button className="text-sm text-primary hover:text-primary/80 font-medium transition-colors">
             View all jobs
           </button>
         </div>
