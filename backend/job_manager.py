@@ -12,6 +12,7 @@ import redis
 import json
 import logging
 import os
+from threading import Lock
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,18 @@ class JobManager:
 
     def __init__(self, redis_url: str = None):
         self.redis_url = redis_url or os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
+        # In-memory fallback storage when Redis is unavailable
+        self._memory_store = {}
+        self._memory_lock = Lock()
+
         try:
             self.redis_client = redis.from_url(self.redis_url)
             # Test connection
             self.redis_client.ping()
+            logger.info("Connected to Redis for job storage")
         except Exception as e:
-            logger.error(f"Failed to connect to Redis: {str(e)}")
+            logger.warning(f"Failed to connect to Redis: {str(e)}. Using in-memory job storage.")
             self.redis_client = None
 
     def submit_timeline_processing(self, job_id: str, audio_file_path: str, drt_file_path: str, options: dict) -> str:
@@ -45,7 +52,7 @@ class JobManager:
             # Submit task to Celery
             task = process_timeline_task.delay(job_id, audio_file_path, drt_file_path, options)
 
-            # Store job metadata in Redis
+            # Store job metadata
             job_data = {
                 'job_id': job_id,
                 'task_id': task.id,
@@ -56,6 +63,26 @@ class JobManager:
                 'drt_file': drt_file_path,
                 'options': options
             }
+
+            # In eager mode, the task executes synchronously and result is immediately available
+            from celery_app import celery_app
+            if celery_app.conf.task_always_eager:
+                try:
+                    # Get the result from the eager execution
+                    # In eager mode, task.get() returns the result directly without backend
+                    task_result = task.get(disable_sync_subtasks=False)
+                    if task_result:
+                        logger.info(f"Eager mode: Task completed, storing result for job {job_id}")
+                        # Update job data with the result
+                        job_data.update({
+                            'status': 'completed',
+                            'result': task_result,
+                            'progress': 100,
+                            'message': task_result.get('message', 'Processing completed'),
+                            'completed_at': datetime.now().isoformat()
+                        })
+                except Exception as e:
+                    logger.warning(f"Could not get eager task result: {str(e)}")
 
             self._store_job_data(job_id, job_data)
 
@@ -153,13 +180,23 @@ class JobManager:
         Get current status of a job
         """
         try:
-            # Get job data from Redis
+            # Get job data from storage (Redis or in-memory)
             job_data = self._get_job_data(job_id)
             if not job_data:
                 raise ValidationError(f"Job {job_id} not found")
 
+            # If job already has a completed status, return it directly
+            if job_data.get('status') in ['completed', 'failed', 'cancelled']:
+                return job_data
+
             task_id = job_data.get('task_id')
             if not task_id:
+                return job_data
+
+            # Only query Celery backend if it's available (not in eager mode)
+            from celery_app import celery_app
+            if celery_app.conf.task_always_eager:
+                # In eager mode, return stored job data directly
                 return job_data
 
             # Get task status from Celery
@@ -250,29 +287,40 @@ class JobManager:
         List jobs with optional filtering
         """
         try:
-            if not self.redis_client:
-                return []
-
-            # Get all job keys
-            job_keys = self.redis_client.keys('job:*')
             jobs = []
 
-            for key in job_keys:
-                try:
-                    job_data = json.loads(self.redis_client.get(key).decode('utf-8'))
+            if self.redis_client:
+                # Get jobs from Redis
+                job_keys = self.redis_client.keys('job:*')
 
-                    # Apply filters
-                    if job_type and job_data.get('type') != job_type:
+                for key in job_keys:
+                    try:
+                        job_data = json.loads(self.redis_client.get(key).decode('utf-8'))
+
+                        # Apply filters
+                        if job_type and job_data.get('type') != job_type:
+                            continue
+
+                        if status and job_data.get('status') != status:
+                            continue
+
+                        jobs.append(job_data)
+
+                    except Exception as e:
+                        logger.warning(f"Failed to parse job data for key {key}: {str(e)}")
                         continue
+            else:
+                # Get jobs from in-memory storage
+                with self._memory_lock:
+                    for job_id, job_data in self._memory_store.items():
+                        # Apply filters
+                        if job_type and job_data.get('type') != job_type:
+                            continue
 
-                    if status and job_data.get('status') != status:
-                        continue
+                        if status and job_data.get('status') != status:
+                            continue
 
-                    jobs.append(job_data)
-
-                except Exception as e:
-                    logger.warning(f"Failed to parse job data for key {key}: {str(e)}")
-                    continue
+                        jobs.append(job_data)
 
             # Sort by creation time (newest first)
             jobs.sort(key=lambda x: x.get('created_at', ''), reverse=True)
@@ -316,28 +364,76 @@ class JobManager:
             return 0
 
     def _store_job_data(self, job_id: str, job_data: dict):
-        """Store job data in Redis"""
+        """Store job data in Redis or in-memory fallback"""
         if self.redis_client:
             try:
                 key = f"job:{job_id}"
                 self.redis_client.setex(key, 86400 * 7, json.dumps(job_data))  # 7 day TTL
             except Exception as e:
-                logger.error(f"Failed to store job data for {job_id}: {str(e)}")
+                logger.error(f"Failed to store job data in Redis for {job_id}: {str(e)}")
+                # Fallback to in-memory storage
+                with self._memory_lock:
+                    self._memory_store[job_id] = job_data
+        else:
+            # Use in-memory storage when Redis is unavailable
+            with self._memory_lock:
+                self._memory_store[job_id] = job_data
+                logger.debug(f"Stored job {job_id} in memory (Redis unavailable)")
 
     def _get_job_data(self, job_id: str) -> dict:
-        """Get job data from Redis"""
-        if not self.redis_client:
-            return {}
-
-        try:
-            key = f"job:{job_id}"
-            data = self.redis_client.get(key)
-            if data:
-                return json.loads(data.decode('utf-8'))
-        except Exception as e:
-            logger.error(f"Failed to get job data for {job_id}: {str(e)}")
+        """Get job data from Redis or in-memory fallback"""
+        if self.redis_client:
+            try:
+                key = f"job:{job_id}"
+                data = self.redis_client.get(key)
+                if data:
+                    return json.loads(data.decode('utf-8'))
+            except Exception as e:
+                logger.error(f"Failed to get job data from Redis for {job_id}: {str(e)}")
+                # Fallback to in-memory storage
+                with self._memory_lock:
+                    return self._memory_store.get(job_id, {})
+        else:
+            # Use in-memory storage when Redis is unavailable
+            with self._memory_lock:
+                job_data = self._memory_store.get(job_id, {})
+                if job_data:
+                    logger.debug(f"Retrieved job {job_id} from memory (Redis unavailable)")
+                return job_data
 
         return {}
+
+    def store_task_result(self, job_id: str, result: dict):
+        """
+        Manually store task result (useful for eager mode where result isn't persisted)
+        """
+        try:
+            job_data = self._get_job_data(job_id)
+
+            if not job_data:
+                logger.warning(f"Job {job_id} not found when storing result")
+                # Create basic job data
+                job_data = {
+                    'job_id': job_id,
+                    'type': 'timeline_processing',
+                    'created_at': datetime.now().isoformat()
+                }
+
+            # Update with result
+            job_data.update({
+                'status': result.get('status', 'completed'),
+                'result': result,
+                'progress': 100,
+                'message': result.get('message', 'Processing completed'),
+                'updated_at': datetime.now().isoformat(),
+                'completed_at': datetime.now().isoformat()
+            })
+
+            self._store_job_data(job_id, job_data)
+            logger.info(f"Stored task result for job {job_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to store task result for job {job_id}: {str(e)}")
 
     def _map_celery_status(self, celery_status: str) -> str:
         """Map Celery task states to our job statuses"""

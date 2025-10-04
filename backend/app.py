@@ -324,7 +324,44 @@ def process_timeline(job_id):
             options=options
         )
 
-        # Update job status to indicate submission
+        # Check if task completed immediately (Celery eager mode)
+        from celery_app import celery_app
+
+        # In eager mode, task executes synchronously and result is available immediately
+        if celery_app.conf.task_always_eager:
+            # Get result from eager execution
+            task = celery_app.AsyncResult(task_id)
+            try:
+                # In eager mode, result is stored in memory
+                task_result = task.result if hasattr(task, 'result') else None
+
+                if task_result:
+                    logger.info(f"Task {task_id} completed in eager mode, storing result")
+                    job_manager.store_task_result(job_id, task_result)
+
+                    # Update job status to indicate completion
+                    job.update({
+                        "status": "completed",
+                        "task_id": task_id,
+                        "progress": 100,
+                        "message": "Timeline processed successfully",
+                        "submitted_at": datetime.now(),
+                        "completed_at": datetime.now(),
+                        "processing_options": options,
+                        "result": task_result
+                    })
+
+                    return jsonify({
+                        "job_id": job_id,
+                        "task_id": task_id,
+                        "status": "completed",
+                        "message": "Timeline processed successfully",
+                        "result": task_result
+                    })
+            except Exception as e:
+                logger.warning(f"Could not get eager task result: {str(e)}")
+
+        # Normal async mode (or fallback if eager mode fails) - update job status to indicate submission
         job.update({
             "status": "queued",
             "task_id": task_id,
@@ -367,7 +404,10 @@ def get_job_status(job_id):
         # Try to get status from job manager (Redis/Celery)
         job_status = job_manager.get_job_status(job_id)
         if job_status:
-            return jsonify({
+            # Extract result data
+            result = job_status.get("result", {})
+
+            response = {
                 "job_id": job_id,
                 "status": job_status.get("status", "unknown"),
                 "progress": job_status.get("progress", 0),
@@ -376,10 +416,26 @@ def get_job_status(job_id):
                 "updated_at": job_status.get("updated_at"),
                 "task_id": job_status.get("task_id"),
                 "type": job_status.get("type", "timeline_processing"),
-                "result": job_status.get("result", {}),
-                "error": job_status.get("error"),
-                "error_type": job_status.get("error_type")
-            })
+            }
+
+            # Add result fields if available
+            if result:
+                response.update({
+                    "stats": result.get("stats", {}),
+                    "transcription_available": result.get("transcription_available", False),
+                    "audio_analysis": result.get("audio_analysis", {}),
+                    "filler_word_detection": result.get("filler_word_detection"),
+                    "ai_enhancements": result.get("ai_enhancements"),
+                })
+
+            # Add error info if failed
+            if job_status.get("error"):
+                response.update({
+                    "error": job_status.get("error"),
+                    "error_type": job_status.get("error_type")
+                })
+
+            return jsonify(response)
 
     except Exception as e:
         logger.warning(f"Failed to get job status from job manager: {str(e)}")

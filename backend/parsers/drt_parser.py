@@ -116,7 +116,7 @@ class DRTParser:
     def _extract_timeline_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract timeline data from parsed XML dictionary"""
         # Navigate through the XML structure to find timeline data
-        # This structure may vary depending on DaVinci Resolve version
+        # Supports both FCP XML (xmeml) and custom formats
 
         timeline_data = {
             'name': 'Imported Timeline',
@@ -128,42 +128,178 @@ class DRTParser:
         }
 
         try:
-            # Look for common .drt XML structures
-            root = data.get('resolve', data.get('timeline', data))
+            sequence = None
 
-            # Extract basic timeline properties
-            if 'timeline' in root:
-                timeline_info = root['timeline']
-                timeline_data['name'] = timeline_info.get('@name', 'Imported Timeline')
-                timeline_data['frame_rate'] = float(timeline_info.get('@framerate', 25.0))
+            # Detect FCP XML format - sequence can be at root level or nested
+            # When _xml_to_dict processes <xmeml><sequence>, 'sequence' appears at root
+            if 'sequence' in data:
+                sequence = data['sequence']
+                logger.debug("Found FCP XML sequence at root level")
 
-            # Extract tracks
-            if 'track' in root:
-                tracks = root['track']
-                if not isinstance(tracks, list):
-                    tracks = [tracks]
+            # Check for nested formats
+            elif 'xmeml' in data:
+                xmeml_root = data['xmeml']
+                logger.debug("Detected nested xmeml structure")
 
-                for track_data in tracks:
-                    track_info = self._parse_track_data(track_data)
-                    if track_info:
-                        timeline_data['tracks'].append(track_info)
+                # Check for direct sequence
+                if 'sequence' in xmeml_root:
+                    sequence = xmeml_root['sequence']
+                    logger.debug("Found sequence in xmeml")
 
-            # Extract markers
-            if 'marker' in root:
-                markers = root['marker']
-                if not isinstance(markers, list):
-                    markers = [markers]
+                # Check for project > children > sequence
+                elif 'project' in xmeml_root:
+                    project = xmeml_root['project']
+                    if 'children' in project and 'sequence' in project['children']:
+                        sequence = project['children']['sequence']
+                        logger.debug("Found nested sequence in project")
 
-                for marker_data in markers:
-                    marker_info = self._parse_marker_data(marker_data)
-                    if marker_info:
-                        timeline_data['markers'].append(marker_info)
+            # Fallback to old custom formats
+            else:
+                root = data.get('resolve', data.get('timeline', data))
+                logger.debug("Using legacy format detection")
+
+                # Extract basic timeline properties (old format)
+                if 'timeline' in root:
+                    timeline_info = root['timeline']
+                    timeline_data['name'] = timeline_info.get('@name', 'Imported Timeline')
+                    timeline_data['frame_rate'] = float(timeline_info.get('@framerate', 25.0))
+
+                # Extract tracks (old format)
+                if 'track' in root:
+                    tracks = root['track']
+                    if not isinstance(tracks, list):
+                        tracks = [tracks]
+
+                    for track_data in tracks:
+                        track_info = self._parse_track_data(track_data)
+                        if track_info:
+                            timeline_data['tracks'].append(track_info)
+
+                # Extract markers (old format)
+                if 'marker' in root:
+                    markers = root['marker']
+                    if not isinstance(markers, list):
+                        markers = [markers]
+
+                    for marker_data in markers:
+                        marker_info = self._parse_marker_data(marker_data)
+                        if marker_info:
+                            timeline_data['markers'].append(marker_info)
+
+                return timeline_data
+
+            # Parse FCP XML sequence
+            if sequence:
+                # Extract timeline name and properties
+                timeline_data['name'] = sequence.get('name', 'Imported Timeline')
+
+                # Extract frame rate from rate element
+                if 'rate' in sequence:
+                    rate = sequence['rate']
+                    if 'timebase' in rate:
+                        timeline_data['frame_rate'] = float(rate['timebase'])
+
+                # Extract sample rate from format if available
+                if 'format' in sequence:
+                    format_data = sequence['format']
+                    if 'samplecharacteristics' in format_data:
+                        sample_chars = format_data['samplecharacteristics']
+                        if 'audio' in sample_chars and 'samplerate' in sample_chars['audio']:
+                            timeline_data['sample_rate'] = int(sample_chars['audio']['samplerate'])
+
+                # Extract tracks from media element
+                if 'media' in sequence:
+                    media = sequence['media']
+                    track_index = 0
+
+                    # Parse video tracks
+                    if 'video' in media:
+                        video_data = media['video']
+                        video_tracks = video_data.get('track', [])
+                        if not isinstance(video_tracks, list):
+                            video_tracks = [video_tracks]
+
+                        for video_track in video_tracks:
+                            track_info = self._parse_fcp_track(video_track, track_index, 'video', timeline_data['frame_rate'])
+                            if track_info:
+                                timeline_data['tracks'].append(track_info)
+                                track_index += 1
+
+                    # Parse audio tracks
+                    if 'audio' in media:
+                        audio_data = media['audio']
+                        audio_tracks = audio_data.get('track', [])
+                        if not isinstance(audio_tracks, list):
+                            audio_tracks = [audio_tracks]
+
+                        for audio_track in audio_tracks:
+                            track_info = self._parse_fcp_track(audio_track, track_index, 'audio', timeline_data['frame_rate'])
+                            if track_info:
+                                timeline_data['tracks'].append(track_info)
+                                track_index += 1
+                else:
+                    logger.warning("No media element found in FCP XML sequence")
+
+                logger.info(f"Parsed FCP XML timeline: {timeline_data['name']}, {len(timeline_data['tracks'])} tracks")
 
         except Exception as e:
             logger.warning(f"Error extracting timeline data: {str(e)}")
             # Return basic structure even if parsing fails
 
         return timeline_data
+
+    def _parse_fcp_track(self, track_data: Dict[str, Any], track_index: int, track_type: str, fps: float) -> Optional[Dict[str, Any]]:
+        """Parse FCP XML track data (from <media><video/audio><track>)"""
+        try:
+            track_info = {
+                'index': track_index,
+                'name': f'{track_type.capitalize()} Track {track_index + 1}',
+                'type': track_type,
+                'clips': []
+            }
+
+            # Extract clip items
+            clipitems = track_data.get('clipitem', [])
+            if not isinstance(clipitems, list):
+                clipitems = [clipitems]
+
+            for clipitem in clipitems:
+                try:
+                    # Parse FCP XML clipitem structure
+                    clip_info = {
+                        'name': clipitem.get('name', 'Unnamed Clip'),
+                        'start_time': float(clipitem.get('start', 0)) / fps,  # Convert frames to seconds
+                        'end_time': float(clipitem.get('end', 0)) / fps,
+                        'duration': float(clipitem.get('duration', 0)) / fps,
+                        'enabled': clipitem.get('enabled', 'TRUE').upper() == 'TRUE'
+                    }
+
+                    # Extract in/out points if available
+                    if 'in' in clipitem:
+                        clip_info['media_in'] = float(clipitem['in']) / fps
+                    if 'out' in clipitem:
+                        clip_info['media_out'] = float(clipitem['out']) / fps
+
+                    # Extract file information if available
+                    if 'file' in clipitem:
+                        file_info = clipitem['file']
+                        if isinstance(file_info, dict):  # Full file info
+                            clip_info['file_name'] = file_info.get('name', '')
+                            clip_info['file_path'] = file_info.get('pathurl', '')
+                        # else: file reference by id only
+
+                    track_info['clips'].append(clip_info)
+
+                except Exception as e:
+                    logger.warning(f"Failed to parse FCP clipitem: {str(e)}")
+                    continue
+
+            logger.debug(f"Parsed {track_type} track {track_index} with {len(track_info['clips'])} clips")
+            return track_info
+
+        except Exception as e:
+            logger.warning(f"Error parsing FCP track: {str(e)}")
+            return None
 
     def _parse_track_data(self, track_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Parse individual track data"""
