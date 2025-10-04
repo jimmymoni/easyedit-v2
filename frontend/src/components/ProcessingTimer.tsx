@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Clock, Timer, Calendar } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 
 interface ProcessingTimerProps {
   startTime: number;
@@ -58,13 +59,13 @@ export default function ProcessingTimer({ startTime, estimatedDuration, isProces
   if (!isProcessing) return null;
 
   return (
-    <div className="space-y-3 p-4 bg-muted/30 rounded-lg border">
+    <div className="space-y-3 p-4 bg-muted/30 rounded-lg border border-border">
       <div className="flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
-          <Timer className="h-4 w-4 text-primary" />
-          <span className="font-medium">Elapsed</span>
+          <Timer className="h-4 w-4 text-muted-foreground" />
+          <span className="text-muted-foreground">Elapsed</span>
         </div>
-        <span className="font-mono text-lg">{formatTime(elapsedTime)}</span>
+        <span className="font-mono text-base font-medium">{formatTime(elapsedTime)}</span>
       </div>
 
       {estimatedDuration && (
@@ -72,30 +73,25 @@ export default function ProcessingTimer({ startTime, estimatedDuration, isProces
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">Remaining</span>
+              <span className="text-muted-foreground">Remaining</span>
             </div>
-            <span className="font-mono text-lg text-muted-foreground">{getRemainingTime()}</span>
+            <span className="font-mono text-base text-muted-foreground">{getRemainingTime()}</span>
           </div>
 
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">ETA</span>
+              <span className="text-muted-foreground">ETA</span>
             </div>
             <span className="font-medium">{formatCompletionTime()}</span>
           </div>
 
-          <div className="space-y-1">
+          <div className="space-y-2">
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>Progress</span>
               <span>{Math.round(getProgress())}%</span>
             </div>
-            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary transition-all duration-500 ease-out"
-                style={{ width: `${getProgress()}%` }}
-              />
-            </div>
+            <Progress value={getProgress()} className="h-1.5" />
           </div>
         </>
       )}

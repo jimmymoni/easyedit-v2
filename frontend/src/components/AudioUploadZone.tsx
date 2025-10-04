@@ -1,7 +1,8 @@
 import { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Music, Upload, X } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Music, X } from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 interface AudioUploadZoneProps {
   audioFile: File | null;
@@ -33,67 +34,61 @@ export default function AudioUploadZone({ audioFile, onFileSelected }: AudioUplo
     onFileSelected(null);
   };
 
-  return (
-    <Card className="border-2 border-dashed transition-colors duration-200 hover:border-primary">
-      <CardContent className="p-6">
-        <div
-          {...getRootProps()}
-          className={`
-            flex flex-col items-center justify-center p-8 rounded-lg cursor-pointer
-            transition-all duration-200
-            ${isDragActive
-              ? 'bg-primary/10 border-2 border-primary'
-              : 'bg-muted/30 hover:bg-muted/50'
-            }
-          `}
-        >
-          <input {...getInputProps()} />
+  const getFileExtension = (filename: string): string => {
+    return filename.split('.').pop()?.toUpperCase() || '';
+  };
 
-          {audioFile ? (
-            <div className="flex flex-col items-center gap-4 w-full">
-              <div className="flex items-center justify-between w-full max-w-md p-4 bg-background rounded-lg border">
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <div className="flex-shrink-0">
-                    <Music className="h-8 w-8 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{audioFile.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {(audioFile.size / 1024 / 1024).toFixed(2)} MB
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={handleRemove}
-                  className="flex-shrink-0 ml-3 p-1 hover:bg-destructive/10 rounded-full transition-colors"
-                >
-                  <X className="h-5 w-5 text-destructive" />
-                </button>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Click or drag to replace
+  return (
+    <Card
+      {...getRootProps()}
+      className={`
+        relative cursor-pointer transition-all duration-200 border
+        ${isDragActive
+          ? 'border-primary bg-primary/5 shadow-md'
+          : audioFile
+          ? 'border-border bg-card hover:bg-accent/50'
+          : 'border-dashed border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-accent/30'
+        }
+      `}
+    >
+      <input {...getInputProps()} />
+
+      {audioFile ? (
+        <div className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex-shrink-0">
+              <Music className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{audioFile.name}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {(audioFile.size / 1024 / 1024).toFixed(1)} MB
               </p>
             </div>
-          ) : (
-            <div className="flex flex-col items-center gap-4 text-center">
-              <div className="p-4 rounded-full bg-primary/10">
-                <Upload className="h-10 w-10 text-primary" />
-              </div>
-              <div>
-                <p className="text-lg font-semibold mb-1">
-                  {isDragActive ? 'Drop audio file here' : 'Upload Audio File'}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  Drag & drop or click to browse
-                </p>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Supports: WAV, MP3, M4A, AAC, FLAC
-                </p>
-              </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="text-xs">
+                {getFileExtension(audioFile.name)}
+              </Badge>
+              <button
+                onClick={handleRemove}
+                className="flex-shrink-0 p-1 hover:bg-destructive/10 rounded-md transition-colors"
+              >
+                <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+              </button>
             </div>
-          )}
+          </div>
         </div>
-      </CardContent>
+      ) : (
+        <div className="p-6 text-center">
+          <Music className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
+          <p className="text-sm font-medium text-foreground mb-1">
+            {isDragActive ? 'Drop audio file' : 'Audio'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            WAV, MP3, M4A, AAC, FLAC
+          </p>
+        </div>
+      )}
     </Card>
   );
 }

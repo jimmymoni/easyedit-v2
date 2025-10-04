@@ -213,23 +213,16 @@ function App() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column - Upload and Options */}
           <div className="space-y-6">
-            {/* File Upload */}
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-2">1. Upload Audio File</h3>
-                <AudioUploadZone
-                  audioFile={audioFile}
-                  onFileSelected={handleAudioSelected}
-                />
-              </div>
-
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-2">2. Upload Timeline File</h3>
-                <TimelineUploadZone
-                  drtFile={drtFile}
-                  onFileSelected={handleDrtSelected}
-                />
-              </div>
+            {/* File Upload - Side by Side */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <AudioUploadZone
+                audioFile={audioFile}
+                onFileSelected={handleAudioSelected}
+              />
+              <TimelineUploadZone
+                drtFile={drtFile}
+                onFileSelected={handleDrtSelected}
+              />
             </div>
 
             {/* Processing Options */}
