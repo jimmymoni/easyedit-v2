@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Github, ExternalLink, Shield } from 'lucide-react';
-import FileDropzone from './components/FileDropzone';
+import AudioUploadZone from './components/AudioUploadZone';
+import TimelineUploadZone from './components/TimelineUploadZone';
 import ProcessingOptions from './components/ProcessingOptions';
 import ProcessingStatus from './components/ProcessingStatus';
 import JobHistory from './components/JobHistory';
@@ -88,9 +89,12 @@ function App() {
     }
   };
 
-  const handleFilesSelected = (audio: File | null, drt: File | null) => {
-    setAudioFile(audio);
-    setDrtFile(drt);
+  const handleAudioSelected = (file: File | null) => {
+    setAudioFile(file);
+  };
+
+  const handleDrtSelected = (file: File | null) => {
+    setDrtFile(file);
   };
 
   const handleUploadAndProcess = async () => {
@@ -210,14 +214,22 @@ function App() {
           {/* Left Column - Upload and Options */}
           <div className="space-y-6">
             {/* File Upload */}
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">Upload Files</h2>
-              <FileDropzone
-                onFilesSelected={handleFilesSelected}
-                audioFile={audioFile}
-                drtFile={drtFile}
-                isUploading={isUploading}
-              />
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">1. Upload Audio File</h3>
+                <AudioUploadZone
+                  audioFile={audioFile}
+                  onFileSelected={handleAudioSelected}
+                />
+              </div>
+
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">2. Upload Timeline File</h3>
+                <TimelineUploadZone
+                  drtFile={drtFile}
+                  onFileSelected={handleDrtSelected}
+                />
+              </div>
             </div>
 
             {/* Processing Options */}

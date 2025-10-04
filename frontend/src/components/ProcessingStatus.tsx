@@ -1,6 +1,7 @@
 import React from 'react';
 import { ProcessingJob, ProcessingStats } from '../types';
 import { CheckCircle, AlertCircle, Clock, Download, BarChart3 } from 'lucide-react';
+import ProcessingTimer from './ProcessingTimer';
 
 interface ProcessingStatusProps {
   job: ProcessingJob;
@@ -59,19 +60,14 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
         </span>
       </div>
 
-      {/* Progress Bar */}
+      {/* Processing Timer */}
       {job.status === 'processing' && (
         <div className="mb-4">
-          <div className="flex justify-between text-sm text-gray-600 mb-1">
-            <span>Progress</span>
-            <span>{job.progress}%</span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div
-              className="bg-primary-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${job.progress}%` }}
-            />
-          </div>
+          <ProcessingTimer
+            startTime={new Date(job.created_at).getTime()}
+            estimatedDuration={60} // 60 seconds estimate, adjust based on file size
+            isProcessing={true}
+          />
         </div>
       )}
 
