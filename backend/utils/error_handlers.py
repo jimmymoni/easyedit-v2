@@ -250,8 +250,9 @@ def validate_processing_options(options: Dict[str, Any]):
     # Check for unexpected keys to prevent injection
     allowed_keys = {
         'enable_transcription', 'enable_speaker_diarization', 'remove_silence',
-        'enable_ai_enhancements', 'min_clip_length', 'silence_threshold_db',
-        'speaker_change_threshold', 'quality_preset', 'output_format'
+        'enable_ai_enhancements', 'enable_ai_enhancement', 'min_clip_length',
+        'silence_threshold_db', 'speaker_change_threshold', 'quality_preset',
+        'output_format', 'detect_filler_words', 'aggressive_filler_removal'
     }
 
     for key in options.keys():
@@ -259,7 +260,11 @@ def validate_processing_options(options: Dict[str, Any]):
             raise ValidationError(f"Unknown option: '{key}'. Allowed options: {', '.join(allowed_keys)}")
 
     # Validate boolean options
-    boolean_options = ['enable_transcription', 'enable_speaker_diarization', 'remove_silence', 'enable_ai_enhancements']
+    boolean_options = [
+        'enable_transcription', 'enable_speaker_diarization', 'remove_silence',
+        'enable_ai_enhancements', 'enable_ai_enhancement', 'detect_filler_words',
+        'aggressive_filler_removal'
+    ]
     for option in boolean_options:
         if option in options and not isinstance(options[option], bool):
             raise ValidationError(f"Option '{option}' must be a boolean")

@@ -214,12 +214,28 @@ class SystemChecker:
         Args:
             results: Results dictionary from run_all_checks()
         """
+        import sys
+
+        # Use UTF-8 encoding for console output if possible (Windows compatibility)
+        if hasattr(sys.stdout, 'reconfigure'):
+            try:
+                sys.stdout.reconfigure(encoding='utf-8')
+            except Exception:
+                pass  # Fallback to default encoding
+
         print("\n" + "="*60)
         print("  System Dependency Check")
         print("="*60)
 
         for check in results['checks']:
-            print(f"\n{check['message']}")
+            # Safely encode message for Windows console
+            message = check['message']
+            try:
+                print(f"\n{message}")
+            except UnicodeEncodeError:
+                # Fallback to ASCII-safe output
+                message_safe = message.encode('ascii', errors='replace').decode('ascii')
+                print(f"\n{message_safe}")
 
         print("\n" + "="*60)
         print(f"Summary: {results['summary']['passed']} passed, "

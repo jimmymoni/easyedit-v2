@@ -14,6 +14,8 @@ except ImportError:
     from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
 from services.edit_rules import EditRulesEngine
 from services.soniox_client import SonioxClient
+from services.filler_word_detector import FillerWordDetector
+from services.ai_enhancer import AIEnhancementService
 from utils.error_handlers import ProcessingError, ValidationError
 import logging
 import os
@@ -49,14 +51,16 @@ def broadcast_failure(job_id: str, error: str, error_type: str = None):
 def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path: str, options: dict):
     """
     Background task for processing timeline with audio analysis and editing
+    Can also be called directly (self=None) for synchronous processing
     """
     try:
         # Update task progress and broadcast
         progress_message = 'Starting timeline processing'
-        self.update_state(
-            state='PROGRESS',
-            meta={'progress': 10, 'message': progress_message, 'job_id': job_id}
-        )
+        if self:
+            self.update_state(
+                state='PROGRESS',
+                meta={'progress': 10, 'message': progress_message, 'job_id': job_id}
+            )
         broadcast_progress(job_id, 10, progress_message)
 
         # Validate inputs
@@ -68,20 +72,22 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
 
         # Parse DRT file
         progress_message = 'Parsing timeline file'
-        self.update_state(
-            state='PROGRESS',
-            meta={'progress': 20, 'message': progress_message, 'job_id': job_id}
-        )
+        if self:
+            self.update_state(
+                state='PROGRESS',
+                meta={'progress': 20, 'message': progress_message, 'job_id': job_id}
+            )
         broadcast_progress(job_id, 20, progress_message)
 
         drt_parser = DRTParser()
         timeline = drt_parser.parse_file(drt_file_path)
 
         # Load and analyze audio with context manager for guaranteed cleanup
-        self.update_state(
-            state='PROGRESS',
-            meta={'progress': 30, 'message': 'Analyzing audio', 'job_id': job_id}
-        )
+        if self:
+            self.update_state(
+                state='PROGRESS',
+                meta={'progress': 30, 'message': 'Analyzing audio', 'job_id': job_id}
+            )
 
         # SECURITY: Use context manager for guaranteed cleanup
         with AudioAnalyzer() as audio_analyzer:
@@ -94,10 +100,11 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
             remove_silence = options.get('remove_silence', True)
 
             # Analyze audio features
-            self.update_state(
-                state='PROGRESS',
-                meta={'progress': 40, 'message': 'Extracting audio features', 'job_id': job_id}
-            )
+            if self:
+                self.update_state(
+                    state='PROGRESS',
+                    meta={'progress': 40, 'message': 'Extracting audio features', 'job_id': job_id}
+                )
 
             audio_analysis = {
                 'silence_segments': audio_analyzer.detect_silence() if remove_silence else [],
@@ -110,10 +117,12 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
         # Transcription (if enabled and API key available)
         transcription_data = None
         if enable_transcription and Config.SONIOX_API_KEY:
-            self.update_state(
-                state='PROGRESS',
-                meta={'progress': 60, 'message': 'Transcribing audio', 'job_id': job_id}
-            )
+            if self:
+                self.update_state(
+                    state='PROGRESS',
+                    meta={'progress': 60, 'message': 'Transcribing audio', 'job_id': job_id}
+                )
+            broadcast_progress(job_id, 60, 'Transcribing audio')
 
             try:
                 soniox_client = SonioxClient()
@@ -121,15 +130,63 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
                     audio_file_path,
                     enable_speaker_diarization
                 )
+                logger.info(f"Transcription completed for job {job_id}")
             except Exception as e:
                 logger.warning(f"Transcription failed for job {job_id}: {str(e)}")
                 # Continue without transcription
 
+        # Filler word detection (if transcription available)
+        filler_word_data = None
+        if transcription_data and options.get('detect_filler_words', False):
+            if self:
+                self.update_state(
+                    state='PROGRESS',
+                    meta={'progress': 65, 'message': 'Detecting filler words', 'job_id': job_id}
+                )
+            broadcast_progress(job_id, 65, 'Detecting filler words')
+
+            try:
+                filler_detector = FillerWordDetector(language='en')
+                filler_word_data = filler_detector.detect_filler_words(
+                    transcription_data,
+                    aggressive=options.get('aggressive_filler_removal', False)
+                )
+                logger.info(f"Detected {filler_word_data.get('total_filler_words', 0)} filler words for job {job_id}")
+            except Exception as e:
+                logger.warning(f"Filler word detection failed for job {job_id}: {str(e)}")
+
+        # AI Enhancement (if enabled and API key available)
+        ai_enhancements = None
+        if options.get('enable_ai_enhancement', False) and Config.OPENAI_API_KEY and transcription_data:
+            if self:
+                self.update_state(
+                    state='PROGRESS',
+                    meta={'progress': 70, 'message': 'Applying AI enhancements', 'job_id': job_id}
+                )
+            broadcast_progress(job_id, 70, 'Applying AI enhancements')
+
+            try:
+                ai_service = AIEnhancementService()
+                # Create timeline object for AI enhancement (temporary for analysis)
+                from models.timeline import Timeline
+                temp_timeline = Timeline()
+                temp_timeline.duration = audio_analysis['features'].get('duration', 0)
+
+                ai_enhancements = ai_service.enhance_timeline_processing(
+                    timeline=temp_timeline,
+                    transcription_data=transcription_data,
+                    audio_analysis=audio_analysis
+                )
+                logger.info(f"AI enhancements applied for job {job_id}: {ai_enhancements.get('applied_enhancements', [])}")
+            except Exception as e:
+                logger.warning(f"AI enhancement failed for job {job_id}: {str(e)}")
+
         # Apply editing rules
-        self.update_state(
-            state='PROGRESS',
-            meta={'progress': 75, 'message': 'Applying editing rules', 'job_id': job_id}
-        )
+        if self:
+            self.update_state(
+                state='PROGRESS',
+                meta={'progress': 75, 'message': 'Applying editing rules', 'job_id': job_id}
+            )
 
         edit_engine = EditRulesEngine()
         edited_timeline = edit_engine.apply_editing_rules(
@@ -139,10 +196,11 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
         )
 
         # Generate output file
-        self.update_state(
-            state='PROGRESS',
-            meta={'progress': 90, 'message': 'Generating output file', 'job_id': job_id}
-        )
+        if self:
+            self.update_state(
+                state='PROGRESS',
+                meta={'progress': 90, 'message': 'Generating output file', 'job_id': job_id}
+            )
 
         output_filename = f"{job_id}_edited_timeline.drt"
         output_path = os.path.join(Config.TEMP_FOLDER, output_filename)
@@ -169,9 +227,28 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
                 'speech_segments_count': len(audio_analysis['speech_segments']),
                 'cut_points_count': len(audio_analysis['cut_points'])
             },
-            'processing_time': time.time() - self.request.started,
+            'filler_word_detection': filler_word_data if filler_word_data and filler_word_data.get('success') else None,
+            'ai_enhancements': ai_enhancements if ai_enhancements and ai_enhancements.get('success') else None,
+            'processing_time': time.time() - (self.request.started if self and hasattr(self, 'request') and hasattr(self.request, 'started') else time.time()),
             'message': 'Timeline processed successfully'
         }
+
+        # Add filler word summary to result if available
+        if filler_word_data and filler_word_data.get('success'):
+            result['filler_word_summary'] = {
+                'total_filler_words': filler_word_data.get('total_filler_words', 0),
+                'filler_percentage': filler_word_data.get('filler_percentage', 0),
+                'most_common': filler_word_data.get('most_common_fillers', [])[:3]
+            }
+
+        # Add AI enhancement summary to result if available
+        if ai_enhancements and ai_enhancements.get('success'):
+            result['ai_enhancement_summary'] = {
+                'applied_enhancements': ai_enhancements.get('applied_enhancements', []),
+                'transcription_enhanced': 'transcription_enhancement' in ai_enhancements.get('applied_enhancements', []),
+                'highlights_detected': 'highlight_extraction' in ai_enhancements.get('applied_enhancements', []),
+                'summary_generated': 'content_summary' in ai_enhancements.get('applied_enhancements', [])
+            }
 
         # Broadcast completion
         broadcast_completion(job_id, result)
@@ -185,10 +262,11 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
 
         logger.error(f"Processing error for job {job_id}: {error_message}")
 
-        self.update_state(
-            state='FAILURE',
-            meta={'progress': 100, 'error': error_message, 'job_id': job_id, 'error_type': error_type}
-        )
+        if self:
+            self.update_state(
+                state='FAILURE',
+                meta={'progress': 100, 'error': error_message, 'job_id': job_id, 'error_type': error_type}
+            )
 
         # Broadcast failure
         broadcast_failure(job_id, error_message, error_type)
@@ -200,10 +278,11 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
 
         logger.exception(f"Unexpected error processing job {job_id}")
 
-        self.update_state(
-            state='FAILURE',
-            meta={'progress': 100, 'error': error_message, 'job_id': job_id, 'error_type': error_type}
-        )
+        if self:
+            self.update_state(
+                state='FAILURE',
+                meta={'progress': 100, 'error': error_message, 'job_id': job_id, 'error_type': error_type}
+            )
 
         # Broadcast failure
         broadcast_failure(job_id, error_message, error_type)
