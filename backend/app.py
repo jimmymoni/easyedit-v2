@@ -467,15 +467,25 @@ def download_result(job_id):
         # Validate job ID
         job_id = validate_job_id(job_id)
 
-        if job_id not in processing_jobs:
-            return jsonify({"error": "Job not found"}), 404
+        # Get job from job_manager instead of old processing_jobs dict
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                return jsonify({"error": "Job not found"}), 404
+        except Exception as e:
+            logger.error(f"Failed to get job status from job manager: {str(e)}")
+            # Fallback to old processing_jobs dict
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
 
-        job = processing_jobs[job_id]
+        if job_status.get("status") != "completed":
+            return jsonify({"error": f"Job status is {job_status.get('status')}, no file available"}), 400
 
-        if job["status"] != "completed":
-            return jsonify({"error": f"Job status is {job['status']}, no file available"}), 400
+        # Get output file from result
+        result = job_status.get("result", {})
+        output_file = result.get("output_file") or job_status.get("output_file")
 
-        output_file = job.get("output_file")
         if not output_file or not os.path.exists(output_file):
             return jsonify({"error": "Output file not found"}), 404
 

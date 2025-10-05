@@ -1,9 +1,12 @@
 import requests
 import json
 import time
+import os
 from typing import Dict, Any, List, Optional
 from config import Config
 import logging
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +16,23 @@ class SonioxClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or Config.SONIOX_API_KEY
         self.base_url = "https://api.soniox.com/transcribe-async"
+
+        # Configure session with retry logic
         self.session = requests.Session()
+        retry_strategy = Retry(
+            total=3,  # 3 retries
+            backoff_factor=2,  # 2s, 4s, 8s delays
+            status_forcelist=[429, 500, 502, 503, 504],  # Retry on these HTTP codes
+            allowed_methods=["GET", "POST"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+
+        # Set authorization header only - DO NOT set Content-Type
+        # Content-Type must be set by requests for multipart/form-data uploads
         self.session.headers.update({
-            'Authorization': f'Bearer {self.api_key}',
-            'Content-Type': 'application/json'
+            'Authorization': f'Bearer {self.api_key}'
         })
 
     def transcribe_audio(self, audio_file_path: str, enable_speaker_diarization: bool = True) -> Dict[str, Any]:
@@ -47,6 +63,13 @@ class SonioxClient:
     def _start_transcription_job(self, audio_file_path: str, enable_speaker_diarization: bool) -> Optional[str]:
         """Start async transcription job"""
         try:
+            # Check file size before upload
+            file_size_mb = os.path.getsize(audio_file_path) / (1024 * 1024)
+            if file_size_mb > 500:  # Soniox limit
+                raise Exception(f"Audio file too large: {file_size_mb:.1f}MB (max 500MB)")
+
+            logger.info(f"Uploading audio file ({file_size_mb:.1f}MB) to Soniox API...")
+
             # Upload audio file
             with open(audio_file_path, 'rb') as audio_file:
                 files = {'audio': audio_file}
@@ -63,23 +86,29 @@ class SonioxClient:
                     'profanity_filter': False
                 }
 
-                # Make request
+                # Make request with timeout for large file uploads
+                # timeout = (connect_timeout, read_timeout)
+                # 30s to connect, 5 minutes (300s) to upload large files
                 response = self.session.post(
                     self.base_url,
                     files=files,
-                    data={'request': json.dumps(request_data)}
+                    data={'request': json.dumps(request_data)},
+                    timeout=(30, 300)
                 )
 
                 if response.status_code == 200:
                     result = response.json()
-                    return result.get('id')
+                    job_id = result.get('id')
+                    logger.info(f"Transcription job started successfully: {job_id}")
+                    return job_id
                 else:
-                    logger.error(f"Soniox API error: {response.status_code} - {response.text}")
-                    return None
+                    error_msg = f"Soniox API error: {response.status_code} - {response.text}"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
 
         except Exception as e:
             logger.error(f"Error starting transcription job: {str(e)}")
-            return None
+            raise  # Re-raise to propagate error details
 
     def _poll_transcription_job(self, job_id: str, max_wait_time: int = 600) -> Optional[Dict[str, Any]]:
         """Poll transcription job until completion"""

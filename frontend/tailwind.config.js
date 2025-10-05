@@ -12,6 +12,11 @@ export default {
   			mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
   		},
   		colors: {
+  			orange: {
+  				'400': '#ff8854',
+  				'500': '#ff6b35',
+  				'600': '#ff5722',
+  			},
   			primary: {
   				'50': '#f0f9ff',
   				'500': '#3b82f6',
@@ -73,6 +78,26 @@ export default {
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',
   			sm: 'calc(var(--radius) - 4px)'
+  		},
+  		keyframes: {
+  			shimmer: {
+  				'0%': { transform: 'translateX(-100%)' },
+  				'100%': { transform: 'translateX(100%)' }
+  			},
+  			'fade-in': {
+  				'0%': { opacity: '0', transform: 'translateY(-10px)' },
+  				'100%': { opacity: '1', transform: 'translateY(0)' }
+  			},
+  			'scale-in': {
+  				'0%': { transform: 'scale(0)' },
+  				'50%': { transform: 'scale(1.2)' },
+  				'100%': { transform: 'scale(1)' }
+  			}
+  		},
+  		animation: {
+  			shimmer: 'shimmer 2s infinite',
+  			'fade-in': 'fade-in 0.3s ease-out',
+  			'scale-in': 'scale-in 0.3s ease-out'
   		}
   	}
   },

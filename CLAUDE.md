@@ -440,6 +440,69 @@ LOG_LEVEL=INFO
 **To start new session**: Ask Claude to "Check current progress and tell me what to work on next"
 **To end session**: Ask Claude to "Update progress and commit everything to git"
 
+## 🎨 Design System
+
+**IMPORTANT: All UI development MUST follow the official design system.**
+
+See **[DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md)** for complete documentation.
+
+### Mandatory Design Rules
+
+When creating or modifying any frontend components, you MUST:
+
+1. **Color Usage:**
+   - Background: `#000000` (pure black)
+   - White cards: `bg-card` with `border-border/80`
+   - Dark surfaces: `bg-[#181818]` with `border-[#2A2A2A]`
+   - Text on dark: `text-[#EAEAEA]`
+   - **Orange brand color (#FF6B35) for ALL interactive elements**: buttons, sliders, progress bars, toggles, links
+   - **NEVER use blue** - not part of brand identity
+   - **NEVER use green for progress** - use orange gradient instead
+
+2. **Component Patterns:**
+   - Cards: `rounded-xl` (12px radius)
+   - Progress bars: Orange `#FF6B35` for in-progress, orange gradient for completion
+   - Hover states: `hover:shadow-md` and `hover:bg-accent/30-50`
+   - Transitions: `transition-all duration-300`
+
+3. **Typography:**
+   - Font: Inter (sans-serif)
+   - Headings: `font-semibold` or `font-bold`
+   - Body: `text-base` (16px)
+
+4. **Spacing:**
+   - Cards: `p-6` (24px) or `p-8` (32px)
+   - Gaps: `space-x-4`, `space-y-4`, `gap-4`
+
+### Quick Reference Colors
+
+```css
+/* Backgrounds */
+--background: #000000         /* Main app background */
+--card: #FFFFFF               /* White cards */
+--dark-surface: #181818       /* Dark cards/containers */
+--dark-border: #2A2A2A        /* Dark borders */
+
+/* Brand */
+--orange-500: #FF6B35         /* PRIMARY - all interactive elements */
+
+/* Text */
+--foreground: hsl(0 0% 3.9%)        /* Text on white */
+--text-light: #EAEAEA                /* Text on dark */
+--text-light-muted: rgba(234, 234, 234, 0.7)  /* Secondary text on dark */
+```
+
+### Reference Components
+
+Follow these components as examples:
+- Dark card: `frontend/src/components/UploadProgress.tsx`
+- White card: `frontend/src/components/ProcessingOptionsTable.tsx`
+- Upload zone: `frontend/src/components/AudioUploadZone.tsx`
+
+**Always check DESIGN_SYSTEM.md before creating new UI components.**
+
+---
+
 ## Development Notes
 
 - Full-stack application with React frontend and Flask backend
@@ -448,3 +511,4 @@ LOG_LEVEL=INFO
 - Containerized deployment with Docker Compose
 - Comprehensive API with rate limiting and validation
 - Real-time job status tracking and progress updates
+- **Design System**: Professional dark UI with orange brand identity (see DESIGN_SYSTEM.md)

@@ -49,20 +49,30 @@ class JobManager:
             if not os.path.exists(drt_file_path):
                 raise ValidationError(f"DRT file not found: {drt_file_path}")
 
-            # Submit task to Celery
-            task = process_timeline_task.delay(job_id, audio_file_path, drt_file_path, options)
-
-            # Store job metadata
+            # Pre-create job data BEFORE task submission to avoid race condition
+            # This ensures the job exists when frontend starts polling for status
             job_data = {
                 'job_id': job_id,
-                'task_id': task.id,
+                'task_id': None,  # Will be set after task creation
                 'type': 'timeline_processing',
                 'status': 'queued',
                 'created_at': datetime.now().isoformat(),
                 'audio_file': audio_file_path,
                 'drt_file': drt_file_path,
-                'options': options
+                'options': options,
+                'progress': 0,
+                'message': 'Job queued for processing'
             }
+
+            # Store initial job data immediately
+            self._store_job_data(job_id, job_data)
+            logger.debug(f"Pre-stored job {job_id} in storage before task submission")
+
+            # Submit task to Celery
+            task = process_timeline_task.delay(job_id, audio_file_path, drt_file_path, options)
+
+            # Update job metadata with task ID
+            job_data['task_id'] = task.id
 
             # In eager mode, the task executes synchronously and result is immediately available
             from celery_app import celery_app
@@ -84,6 +94,7 @@ class JobManager:
                 except Exception as e:
                     logger.warning(f"Could not get eager task result: {str(e)}")
 
+            # Store final job data with task ID and results
             self._store_job_data(job_id, job_data)
 
             logger.info(f"Timeline processing job {job_id} submitted with task ID {task.id}")

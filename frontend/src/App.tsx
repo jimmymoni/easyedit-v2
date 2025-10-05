@@ -6,6 +6,7 @@ import ProcessingOptionsTable from './components/ProcessingOptionsTable';
 import ProcessingStatus from './components/ProcessingStatus';
 import JobHistoryDropdown from './components/JobHistoryDropdown';
 import AuthButton from './components/AuthButton';
+import UploadProgress from './components/UploadProgress';
 import { useAuth } from './contexts/AuthContext';
 import * as api from './services/api';
 import { ProcessingJob, ProcessingOptions as ProcessingOptionsType } from './types';
@@ -17,6 +18,8 @@ function App() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [drtFile, setDrtFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<api.UploadProgress | null>(null);
+  const [uploadComplete, setUploadComplete] = useState(false);
 
   // State for processing
   const [processingOptions, setProcessingOptions] = useState<ProcessingOptionsType>({
@@ -101,10 +104,25 @@ function App() {
     if (!audioFile || !drtFile) return;
 
     setIsUploading(true);
+    setUploadProgress(null);
+    setUploadComplete(false);
+
     try {
-      // Upload files
-      const uploadResponse = await api.uploadFiles(audioFile, drtFile);
+      // Upload files with progress tracking
+      const uploadResponse = await api.uploadFiles(
+        audioFile,
+        drtFile,
+        (progress) => {
+          setUploadProgress(progress);
+        }
+      );
       console.log('Upload successful:', uploadResponse);
+
+      // Mark upload as complete
+      setUploadComplete(true);
+
+      // Wait a moment to show completion state
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Set initial job status
       const initialJob: ProcessingJob = {
@@ -128,6 +146,8 @@ function App() {
       alert('Upload or processing failed. Please try again.');
     } finally {
       setIsUploading(false);
+      setUploadProgress(null);
+      setUploadComplete(false);
     }
   };
 
@@ -255,8 +275,16 @@ function App() {
             {isUploading ? 'Uploading...' : 'Upload & Process Timeline'}
           </button>
 
+          {/* Upload Progress */}
+          {uploadProgress && (
+            <UploadProgress
+              progress={uploadProgress}
+              isComplete={uploadComplete}
+            />
+          )}
+
           {/* Current Job Status */}
-          {currentJob && (
+          {currentJob && !uploadProgress && (
             <ProcessingStatus
               job={selectedJob || currentJob}
               onDownload={handleDownload}

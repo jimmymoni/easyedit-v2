@@ -116,6 +116,8 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
 
         # Transcription (if enabled and API key available)
         transcription_data = None
+        transcription_error = None
+        transcription_error_details = None
         if enable_transcription and Config.SONIOX_API_KEY:
             if self:
                 self.update_state(
@@ -132,7 +134,14 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
                 )
                 logger.info(f"Transcription completed for job {job_id}")
             except Exception as e:
-                logger.warning(f"Transcription failed for job {job_id}: {str(e)}")
+                transcription_error = str(e)
+                transcription_error_details = {
+                    'error_type': type(e).__name__,
+                    'error_message': str(e),
+                    'stage': 'transcription_upload'
+                }
+                logger.warning(f"Transcription failed for job {job_id}: {transcription_error}")
+                logger.exception("Full transcription error traceback:")
                 # Continue without transcription
 
         # Filler word detection (if transcription available)
@@ -221,6 +230,8 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
             'output_file': output_path,
             'stats': stats,
             'transcription_available': transcription_data is not None,
+            'transcription_error': transcription_error,
+            'transcription_error_details': transcription_error_details,
             'audio_analysis': {
                 'duration': audio_analysis['features'].get('duration', 0),
                 'silence_segments_count': len(audio_analysis['silence_segments']),
