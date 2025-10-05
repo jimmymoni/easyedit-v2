@@ -42,7 +42,7 @@ class SonioxClient:
             file_id = transcribe_file_async(
                 file_path=audio_file_path,
                 client=self.client,
-                model="nova-2-general",  # Best multilingual model
+                model="",  # Empty for auto-detection (supports Malayalam + English)
                 enable_streaming_speaker_diarization=enable_speaker_diarization,
                 enable_global_speaker_diarization=True,
                 max_num_speakers=10,
