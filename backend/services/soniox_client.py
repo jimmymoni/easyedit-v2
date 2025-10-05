@@ -83,7 +83,15 @@ class SonioxClient:
             response = requests.post(url, files=files, headers=headers)
             response.raise_for_status()
 
-        return response.json()['file_id']
+        result = response.json()
+        logger.info(f"File upload response: {result}")
+
+        # API returns either 'file_id' or 'id'
+        file_id = result.get('file_id') or result.get('id')
+        if not file_id:
+            raise Exception(f"No file_id in response. Got: {result}")
+
+        return file_id
 
     def _create_transcription(self, file_id: str, enable_speaker_diarization: bool) -> str:
         """Create transcription job and return transcription_id"""
