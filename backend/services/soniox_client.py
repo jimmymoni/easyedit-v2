@@ -9,7 +9,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from soniox.speech_service import SpeechClient
-from soniox.transcribe_file_async import transcribe_file_async, FileSource
+from soniox.transcribe_file import transcribe_file_async
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -37,23 +37,33 @@ class SonioxClient:
 
             logger.info(f"Starting Soniox transcription for {file_size_mb:.1f}MB file...")
 
-            # Create file source
-            file_source = FileSource(path=audio_file_path)
-
-            # Transcribe using official SDK
-            # This handles upload, processing, and polling automatically
-            result = transcribe_file_async(
-                file_source=file_source,
-                api_key=self.api_key,
+            # Upload and start transcription using official SDK
+            # This returns a file_id for async processing
+            file_id = transcribe_file_async(
+                file_path=audio_file_path,
+                client=self.client,
                 model="nova-2-general",  # Best multilingual model
-                enable_speaker_diarization=enable_speaker_diarization,
-                max_num_speakers=10,
+                enable_streaming_speaker_diarization=enable_speaker_diarization,
                 enable_global_speaker_diarization=True,
-                language=["en", "ml"],  # English and Malayalam
+                max_num_speakers=10,
                 enable_profanity_filter=False,
             )
 
-            logger.info(f"Transcription completed successfully")
+            logger.info(f"Audio uploaded, file_id: {file_id}. Waiting for transcription...")
+
+            # Poll for completion
+            while True:
+                status = self.client.GetTranscribeAsyncStatus(file_id)
+                if status.status == "COMPLETED":
+                    logger.info("Transcription completed successfully")
+                    break
+                elif status.status == "FAILED":
+                    raise Exception(f"Transcription failed: {status.error}")
+                logger.info(f"Transcription in progress... ({status.status})")
+                time.sleep(2)
+
+            # Get the result
+            result = self.client.GetTranscribeAsyncResult(file_id)
 
             # Process and return structured result
             return self._process_transcription_result(result)
