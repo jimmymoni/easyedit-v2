@@ -13,7 +13,7 @@ except ImportError:
     # Fallback to simple audio analyzer if librosa dependencies not available
     from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
 from services.edit_rules import EditRulesEngine
-from services.soniox_client import SonioxClient
+from services.sarvam_client import SarvamClient
 from services.filler_word_detector import FillerWordDetector
 from services.ai_enhancer import AIEnhancementService
 from utils.error_handlers import ProcessingError, ValidationError
@@ -127,7 +127,7 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
             broadcast_progress(job_id, 60, 'Transcribing audio')
 
             try:
-                soniox_client = SonioxClient()
+                soniox_client = SarvamClient()
                 transcription_data = soniox_client.transcribe_audio(
                     audio_file_path,
                     enable_speaker_diarization
@@ -371,7 +371,7 @@ def transcribe_audio_task(self, audio_file_path: str, options: dict):
             meta={'progress': 10, 'message': 'Starting transcription'}
         )
 
-        soniox_client = SonioxClient()
+        soniox_client = SarvamClient()
         transcription_data = soniox_client.transcribe_audio(
             audio_file_path,
             options.get('enable_speaker_diarization', False)

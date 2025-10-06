@@ -30,11 +30,9 @@ ENV/
 .venv/
 .env/
 
-# Environment variables
-.env
-.env.local
-.env.production
-.env.test
+# Environment variables (catch all .env files including copies/backups)
+.env*
+!.env.example
 
 # IDE
 .vscode/
@@ -62,6 +60,7 @@ temp/
 tmp/
 *.tmp
 *.temp
+nul
 
 # Node.js (for frontend)
 node_modules/
@@ -94,6 +93,16 @@ htmlcov/
 uploads/
 media/
 
+# Test data files (audio samples)
+backend/tests/sample_data/*.wav
+backend/tests/sample_data/*.mp3
+backend/tests/sample_data/*.m4a
+backend/tests/sample_data/*.aac
+backend/tests/sample_data/*.flac
+
+# Job data storage (persistent across restarts but not committed)
+backend/jobs_data/
+
 # Redis dump
 dump.rdb
 
@@ -113,6 +122,10 @@ settings.local.py
 # Package files
 *.tar.gz
 *.zip
+
+# Processed output files (DRT timeline files)
+*.drt
+!backend/tests/sample_data/*.drt
 
 # Claude Code specific
 .claude/outputs/

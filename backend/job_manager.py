@@ -24,9 +24,16 @@ class JobManager:
     def __init__(self, redis_url: str = None):
         self.redis_url = redis_url or os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 
-        # In-memory fallback storage when Redis is unavailable
+        # File-based persistent storage directory
+        self.jobs_dir = os.path.join(os.path.dirname(__file__), 'jobs_data')
+        os.makedirs(self.jobs_dir, exist_ok=True)
+
+        # In-memory cache for quick lookups (synced with file storage)
         self._memory_store = {}
         self._memory_lock = Lock()
+
+        # Load existing jobs from file storage on startup
+        self._load_jobs_from_disk()
 
         try:
             self.redis_client = redis.from_url(self.redis_url)
@@ -34,7 +41,7 @@ class JobManager:
             self.redis_client.ping()
             logger.info("Connected to Redis for job storage")
         except Exception as e:
-            logger.warning(f"Failed to connect to Redis: {str(e)}. Using in-memory job storage.")
+            logger.warning(f"Failed to connect to Redis: {str(e)}. Using file-based job storage.")
             self.redis_client = None
 
     def submit_timeline_processing(self, job_id: str, audio_file_path: str, drt_file_path: str, options: dict) -> str:
@@ -321,7 +328,7 @@ class JobManager:
                         logger.warning(f"Failed to parse job data for key {key}: {str(e)}")
                         continue
             else:
-                # Get jobs from in-memory storage
+                # Get jobs from memory cache (which is loaded from file storage on startup)
                 with self._memory_lock:
                     for job_id, job_data in self._memory_store.items():
                         # Apply filters
@@ -375,42 +382,51 @@ class JobManager:
             return 0
 
     def _store_job_data(self, job_id: str, job_data: dict):
-        """Store job data in Redis or in-memory fallback"""
+        """Store job data in Redis or file-based persistent storage"""
         if self.redis_client:
             try:
                 key = f"job:{job_id}"
                 self.redis_client.setex(key, 86400 * 7, json.dumps(job_data))  # 7 day TTL
             except Exception as e:
                 logger.error(f"Failed to store job data in Redis for {job_id}: {str(e)}")
-                # Fallback to in-memory storage
-                with self._memory_lock:
-                    self._memory_store[job_id] = job_data
+                # Fallback to file-based storage
+                self._store_job_to_file(job_id, job_data)
         else:
-            # Use in-memory storage when Redis is unavailable
-            with self._memory_lock:
-                self._memory_store[job_id] = job_data
-                logger.debug(f"Stored job {job_id} in memory (Redis unavailable)")
+            # Use file-based persistent storage when Redis is unavailable
+            self._store_job_to_file(job_id, job_data)
+
+        # Always cache in memory for quick lookups
+        with self._memory_lock:
+            self._memory_store[job_id] = job_data
 
     def _get_job_data(self, job_id: str) -> dict:
-        """Get job data from Redis or in-memory fallback"""
+        """Get job data from Redis, memory cache, or file storage"""
+        # First check memory cache (fastest)
+        with self._memory_lock:
+            if job_id in self._memory_store:
+                return self._memory_store[job_id]
+
+        # Then try Redis if available
         if self.redis_client:
             try:
                 key = f"job:{job_id}"
                 data = self.redis_client.get(key)
                 if data:
-                    return json.loads(data.decode('utf-8'))
+                    job_data = json.loads(data.decode('utf-8'))
+                    # Cache it in memory
+                    with self._memory_lock:
+                        self._memory_store[job_id] = job_data
+                    return job_data
             except Exception as e:
                 logger.error(f"Failed to get job data from Redis for {job_id}: {str(e)}")
-                # Fallback to in-memory storage
-                with self._memory_lock:
-                    return self._memory_store.get(job_id, {})
-        else:
-            # Use in-memory storage when Redis is unavailable
+
+        # Finally try file storage
+        job_data = self._load_job_from_file(job_id)
+        if job_data:
+            # Cache it in memory
             with self._memory_lock:
-                job_data = self._memory_store.get(job_id, {})
-                if job_data:
-                    logger.debug(f"Retrieved job {job_id} from memory (Redis unavailable)")
-                return job_data
+                self._memory_store[job_id] = job_data
+            return job_data
 
         return {}
 
@@ -458,6 +474,57 @@ class JobManager:
             'REVOKED': 'cancelled'
         }
         return status_mapping.get(celery_status, 'unknown')
+
+    def _store_job_to_file(self, job_id: str, job_data: dict):
+        """Store job data to a JSON file for persistence"""
+        try:
+            file_path = os.path.join(self.jobs_dir, f"{job_id}.json")
+            with open(file_path, 'w') as f:
+                json.dump(job_data, f, indent=2)
+            logger.debug(f"Stored job {job_id} to file storage")
+        except Exception as e:
+            logger.error(f"Failed to store job {job_id} to file: {str(e)}")
+
+    def _load_job_from_file(self, job_id: str) -> dict:
+        """Load job data from a JSON file"""
+        try:
+            file_path = os.path.join(self.jobs_dir, f"{job_id}.json")
+            if os.path.exists(file_path):
+                with open(file_path, 'r') as f:
+                    job_data = json.load(f)
+                logger.debug(f"Loaded job {job_id} from file storage")
+                return job_data
+        except Exception as e:
+            logger.error(f"Failed to load job {job_id} from file: {str(e)}")
+        return {}
+
+    def _load_jobs_from_disk(self):
+        """Load all existing jobs from disk into memory cache on startup"""
+        try:
+            if not os.path.exists(self.jobs_dir):
+                return
+
+            job_files = [f for f in os.listdir(self.jobs_dir) if f.endswith('.json')]
+            loaded_count = 0
+
+            with self._memory_lock:
+                for filename in job_files:
+                    try:
+                        job_id = filename.replace('.json', '')
+                        file_path = os.path.join(self.jobs_dir, filename)
+
+                        with open(file_path, 'r') as f:
+                            job_data = json.load(f)
+                            self._memory_store[job_id] = job_data
+                            loaded_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to load job file {filename}: {str(e)}")
+                        continue
+
+            if loaded_count > 0:
+                logger.info(f"Loaded {loaded_count} jobs from file storage into memory")
+        except Exception as e:
+            logger.error(f"Failed to load jobs from disk: {str(e)}")
 
 # Global job manager instance
 job_manager = JobManager()

@@ -7,6 +7,7 @@ load_dotenv()
 class Config:
     # API Keys
     SONIOX_API_KEY = os.getenv('SONIOX_API_KEY')
+    SARVAM_API_KEY = os.getenv('SARVAM_API_KEY')
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
     # Flask Configuration
