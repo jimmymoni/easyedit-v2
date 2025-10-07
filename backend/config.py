@@ -10,6 +10,11 @@ class Config:
     SARVAM_API_KEY = os.getenv('SARVAM_API_KEY')
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
+    # Transcription Provider Selection
+    # Options: 'soniox', 'sarvam', 'auto'
+    # 'auto' selects Sarvam if available (cheaper), falls back to Soniox
+    TRANSCRIPTION_PROVIDER = os.getenv('TRANSCRIPTION_PROVIDER', 'auto')
+
     # Flask Configuration
     SECRET_KEY = os.getenv('SECRET_KEY') or secrets.token_hex(32)
     DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'

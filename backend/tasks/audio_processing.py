@@ -13,7 +13,7 @@ except ImportError:
     # Fallback to simple audio analyzer if librosa dependencies not available
     from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
 from services.edit_rules import EditRulesEngine
-from services.sarvam_client import SarvamClient
+from services.transcription_service import TranscriptionServiceFactory
 from services.filler_word_detector import FillerWordDetector
 from services.ai_enhancer import AIEnhancementService
 from utils.error_handlers import ProcessingError, ValidationError
@@ -114,11 +114,11 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
             }
         # Automatic cleanup of audio data and temp files
 
-        # Transcription (if enabled and API key available)
+        # Transcription (if enabled)
         transcription_data = None
         transcription_error = None
         transcription_error_details = None
-        if enable_transcription and Config.SONIOX_API_KEY:
+        if enable_transcription:
             if self:
                 self.update_state(
                     state='PROGRESS',
@@ -127,18 +127,29 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
             broadcast_progress(job_id, 60, 'Transcribing audio')
 
             try:
-                soniox_client = SarvamClient()
-                transcription_data = soniox_client.transcribe_audio(
+                # Use factory to get the configured transcription provider
+                transcription_service = TranscriptionServiceFactory.create()
+                transcription_data = transcription_service.transcribe_audio(
                     audio_file_path,
                     enable_speaker_diarization
                 )
-                logger.info(f"Transcription completed for job {job_id}")
+                logger.info(f"Transcription completed for job {job_id} using {transcription_data.get('provider', 'unknown')} provider")
+            except ValueError as e:
+                # Factory raises ValueError if no API keys configured
+                transcription_error = str(e)
+                transcription_error_details = {
+                    'error_type': 'ConfigurationError',
+                    'error_message': str(e),
+                    'stage': 'transcription_setup'
+                }
+                logger.warning(f"Transcription disabled for job {job_id}: {transcription_error}")
+                # Continue without transcription
             except Exception as e:
                 transcription_error = str(e)
                 transcription_error_details = {
                     'error_type': type(e).__name__,
                     'error_message': str(e),
-                    'stage': 'transcription_upload'
+                    'stage': 'transcription_processing'
                 }
                 logger.warning(f"Transcription failed for job {job_id}: {transcription_error}")
                 logger.exception("Full transcription error traceback:")
@@ -361,18 +372,17 @@ def analyze_audio_task(self, audio_file_path: str, analysis_options: dict):
 def transcribe_audio_task(self, audio_file_path: str, options: dict):
     """
     Background task for audio transcription
+    Uses configured transcription provider (Soniox, Sarvam, or auto-select)
     """
     try:
-        if not Config.SONIOX_API_KEY:
-            raise ProcessingError("Soniox API key not configured")
-
         self.update_state(
             state='PROGRESS',
             meta={'progress': 10, 'message': 'Starting transcription'}
         )
 
-        soniox_client = SarvamClient()
-        transcription_data = soniox_client.transcribe_audio(
+        # Use factory to get the configured transcription provider
+        transcription_service = TranscriptionServiceFactory.create()
+        transcription_data = transcription_service.transcribe_audio(
             audio_file_path,
             options.get('enable_speaker_diarization', False)
         )
@@ -385,8 +395,18 @@ def transcribe_audio_task(self, audio_file_path: str, options: dict):
         return {
             'status': 'completed',
             'transcription': transcription_data,
-            'file_path': audio_file_path
+            'file_path': audio_file_path,
+            'provider': transcription_data.get('provider', 'unknown')
         }
+
+    except ValueError as e:
+        # Factory raises ValueError if no API keys configured
+        logger.error(f"Transcription configuration error: {str(e)}")
+        self.update_state(
+            state='FAILURE',
+            meta={'error': str(e), 'file_path': audio_file_path, 'error_type': 'ConfigurationError'}
+        )
+        raise ProcessingError(str(e)) from e
 
     except Exception as e:
         logger.exception(f"Transcription failed for {audio_file_path}")
