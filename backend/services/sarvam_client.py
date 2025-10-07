@@ -79,20 +79,28 @@ class SarvamClient:
 
             logger.info(f"Starting Sarvam transcription for {file_size_mb:.1f}MB file...")
 
-            # Step 1: Submit batch transcription job
-            job_id = self._submit_batch_job(
+            # Step 1: Submit transcription request (may be sync or async)
+            response = self._submit_batch_job(
                 validated_path,
                 language_code=language_code,
                 enable_speaker_diarization=enable_speaker_diarization
             )
-            logger.info(f"Batch job submitted successfully: {job_id}")
 
-            # Step 2: Poll for completion (with exponential backoff)
-            self._wait_until_completed(job_id)
-            logger.info("Transcription completed successfully")
+            # Check if response is synchronous (contains transcript directly)
+            if isinstance(response, dict) and 'transcript' in response:
+                logger.info("Received synchronous transcription response")
+                result = response
+            else:
+                # Batch API - job_id returned
+                job_id = response
+                logger.info(f"Batch job submitted successfully: {job_id}")
 
-            # Step 3: Get transcription result
-            result = self._get_batch_result(job_id)
+                # Step 2: Poll for completion (with exponential backoff)
+                self._wait_until_completed(job_id)
+                logger.info("Transcription completed successfully")
+
+                # Step 3: Get transcription result
+                result = self._get_batch_result(job_id)
 
             # Process and return structured result
             return self._process_transcription_result(result, enable_speaker_diarization)
@@ -182,16 +190,15 @@ class SarvamClient:
 
         SECURITY: Request timeout, sanitized logging
         """
-        url = f"{self.API_BASE_URL}/speech-to-text-translate"
+        url = f"{self.API_BASE_URL}/speech-to-text"
 
         with open(file_path, 'rb') as f:
             files = {
                 'file': (os.path.basename(file_path), f, 'audio/wav')
             }
             data = {
-                'model': 'saarika:v1',  # Sarvam's transcription model
-                'language_code': language_code,
-                'with_timestamps': 'true'
+                'model': 'saarika:v2.5',  # Sarvam's transcription model (latest)
+                'language_code': language_code
             }
 
             # Add diarization flag if requested
@@ -213,12 +220,19 @@ class SarvamClient:
 
         result = response.json()
         # SECURITY: Sanitize before logging
-        logger.info(f"Batch job submission response: {self._sanitize_response(result)}")
+        logger.info(f"API response: {self._sanitize_response(result)}")
 
+        # Check if this is a synchronous response with transcription directly
+        if 'transcript' in result:
+            # Synchronous API - return result directly as a fake job_id
+            # We'll store the result and return it immediately
+            return result  # Return full result, not job_id
+
+        # Otherwise, treat as batch API
         # Extract job_id from response
         job_id = result.get('job_id') or result.get('id')
         if not job_id:
-            raise Exception(f"No job_id in response. Got: {list(result.keys())}")
+            raise Exception(f"No job_id or transcript in response. Got: {list(result.keys())}")
 
         return job_id
 
