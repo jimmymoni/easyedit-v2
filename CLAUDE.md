@@ -454,6 +454,41 @@ LOG_LEVEL=INFO
 - **Architecture Preserved**: Factory pattern and adapter architecture remain for future extensibility
 - **Time**: ~30 minutes
 
+### Session 7 Summary (January 30, 2025) - 🔬 SARVAM BATCH API RESEARCH
+- **Major Achievement**: Comprehensive investigation of Sarvam Batch API for speaker diarization
+- **Research Findings**:
+  - ✅ Real-time API (`/speech-to-text`) works perfectly (no diarization)
+  - ✅ Hybrid routing implemented: real-time vs batch based on diarization flag
+  - ❌ Sarvam SDK (v0.1.11a2) has schema mismatches with current API
+    - SDK expects `owner_id` from `/job/init` but API doesn't return it
+    - `owner_id` is actually returned by `/job/{job_id}/status` endpoint
+  - ❌ Batch API `/v1/*` endpoints not publicly accessible
+    - `/v1/upload-files` returns "job does not exist" error
+    - `/v1/{job_id}/start` returns "job does not exist" error
+    - Even though `/job/{job_id}/status` shows job exists
+- **SDK Analysis**:
+  - Examined SDK source code (`sarvamai==0.1.11a2`)
+  - Discovered expected workflow: init → get_upload_links → upload → start → poll
+  - Found endpoints: `/v1/upload-files`, `/v1/{job_id}/start`, `/v1/download-files`
+  - SDK's Pydantic validation fails due to API schema changes
+- **REST API Testing**:
+  - ✅ `/job/init` works, returns job_id and Azure URLs
+  - ✅ `/job/{job_id}/status` works
+  - ✅ Direct Azure Blob Storage upload works (201 Created)
+  - ❌ `/v1/*` endpoints consistently fail with "job does not exist"
+- **Implementation**:
+  - ✅ Replaced SDK with pure REST API implementation in `sarvam_client.py`
+  - ✅ Removed SDK dependency and validation checks
+  - ✅ 7-step workflow implemented (init, upload-files, Azure upload, start, poll, download-files, download)
+  - ⚠️ Implementation cannot be tested - Batch API appears unavailable
+- **Conclusion**: Sarvam Batch API with diarization is not publicly available via REST endpoints
+- **Recommendation**:
+  - Contact Sarvam AI support for Batch API access/documentation
+  - Use real-time API without diarization for now
+  - Consider alternative diarization solutions (pyannote.audio, NVIDIA NeMo, etc.)
+- **Status**: ⏸️ Batch API blocked - awaiting vendor support
+- **Time**: ~3 hours
+
 **Next Priorities for Future Sessions:**
 
 ### ~~Priority 1: AI Integration~~ ✅ COMPLETED (Session 5)

@@ -15,11 +15,15 @@ import os
 import time
 import logging
 import requests
+import tempfile
 from typing import Dict, Any, List, Optional
 
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+# Note: Batch API uses direct REST calls (no SDK required)
+# SDK v0.1.11a2 has schema mismatches with the current API
 
 # Note: MIME type validation skipped on Windows (requires libmagic DLL)
 # Extension validation provides primary defense against invalid file types
@@ -32,7 +36,7 @@ class SarvamClient:
 
     # Timeout constants
     REQUEST_TIMEOUT = 30  # seconds for regular API calls
-    UPLOAD_TIMEOUT = 300  # seconds for large file uploads (5 minutes)
+    UPLOAD_TIMEOUT = 900  # seconds for large file uploads (15 minutes)
 
     # Polling constants for batch jobs
     INITIAL_POLL_INTERVAL = 3  # start at 3 seconds
@@ -56,54 +60,36 @@ class SarvamClient:
         language_code: str = "ml-IN"
     ) -> Dict[str, Any]:
         """
-        Transcribe audio file with optional speaker diarization using Batch API
-        Returns transcription with speaker labels and timestamps
+        Transcribe audio file with optional speaker diarization
+        Routes to REST API (no diarization) or SDK Batch API (with diarization)
 
         SECURITY: Guaranteed cleanup with finally block
 
         Args:
             audio_file_path: Path to audio file
-            enable_speaker_diarization: Enable speaker identification
+            enable_speaker_diarization: Enable speaker identification (requires Batch API)
             language_code: Language code (ml-IN for Malayalam, en-IN for English)
         """
-        job_id = None
+        # Validate file path (SECURITY: prevent directory traversal)
+        validated_path = self._validate_audio_file_path(audio_file_path)
+
+        # Check file size before upload
+        file_size_mb = os.path.getsize(validated_path) / (1024 * 1024)
+        if file_size_mb > 500:  # Conservative limit
+            raise ValueError(f"Audio file too large: {file_size_mb:.1f}MB (max 500MB)")
+
+        logger.info(f"Starting Sarvam transcription for {file_size_mb:.1f}MB file...")
 
         try:
-            # Validate file path (SECURITY: prevent directory traversal)
-            validated_path = self._validate_audio_file_path(audio_file_path)
-
-            # Check file size before upload
-            file_size_mb = os.path.getsize(validated_path) / (1024 * 1024)
-            if file_size_mb > 500:  # Conservative limit
-                raise ValueError(f"Audio file too large: {file_size_mb:.1f}MB (max 500MB)")
-
-            logger.info(f"Starting Sarvam transcription for {file_size_mb:.1f}MB file...")
-
-            # Step 1: Submit transcription request (may be sync or async)
-            response = self._submit_batch_job(
-                validated_path,
-                language_code=language_code,
-                enable_speaker_diarization=enable_speaker_diarization
-            )
-
-            # Check if response is synchronous (contains transcript directly)
-            if isinstance(response, dict) and 'transcript' in response:
-                logger.info("Received synchronous transcription response")
-                result = response
+            # Route based on diarization requirement
+            if enable_speaker_diarization:
+                # Diarization requires Batch API (pure REST)
+                logger.info("Using Batch API for diarization")
+                return self._transcribe_with_batch_api(validated_path, language_code)
             else:
-                # Batch API - job_id returned
-                job_id = response
-                logger.info(f"Batch job submitted successfully: {job_id}")
-
-                # Step 2: Poll for completion (with exponential backoff)
-                self._wait_until_completed(job_id)
-                logger.info("Transcription completed successfully")
-
-                # Step 3: Get transcription result
-                result = self._get_batch_result(job_id)
-
-            # Process and return structured result
-            return self._process_transcription_result(result, enable_speaker_diarization)
+                # No diarization - use fast REST API
+                logger.info("Using real-time REST API (no diarization)")
+                return self._transcribe_with_rest_api(validated_path, language_code)
 
         except requests.exceptions.Timeout as e:
             logger.error(f"Sarvam API timeout: {str(e)}")
@@ -118,12 +104,6 @@ class SarvamClient:
         except Exception as e:
             logger.error(f"Error transcribing audio: {str(e)}")
             raise
-
-        finally:
-            # GUARANTEED cleanup - Note: Sarvam Batch API auto-cleans after retrieval
-            # No explicit cleanup needed, but log completion
-            if job_id:
-                logger.info(f"Batch job {job_id} processing complete")
 
     def _validate_audio_file_path(self, file_path: str) -> str:
         """
@@ -164,6 +144,219 @@ class SarvamClient:
 
         return abs_path
 
+    def _transcribe_with_rest_api(
+        self,
+        file_path: str,
+        language_code: str
+    ) -> Dict[str, Any]:
+        """
+        Transcribe using real-time REST API (no diarization)
+        Fast, synchronous, up to 30 seconds
+        """
+        url = f"{self.API_BASE_URL}/speech-to-text"
+
+        with open(file_path, 'rb') as f:
+            files = {'file': (os.path.basename(file_path), f, 'audio/wav')}
+            data = {
+                'model': 'saarika:v2.5',
+                'language_code': language_code,
+                'with_timestamps': 'true'
+            }
+            headers = {k: v for k, v in self.session.headers.items() if k != 'Content-Type'}
+            headers['api-subscription-key'] = self.api_key
+
+            response = requests.post(
+                url, files=files, data=data, headers=headers,
+                timeout=self.UPLOAD_TIMEOUT
+            )
+            response.raise_for_status()
+
+        result = response.json()
+        logger.info(f"Real-time API response: {self._sanitize_response(result)}")
+        return self._process_transcription_result(result, has_diarization=False)
+
+    def _transcribe_with_batch_api(
+        self,
+        file_path: str,
+        language_code: str
+    ) -> Dict[str, Any]:
+        """
+        Transcribe using Batch API (pure REST, no SDK) with diarization
+        Handles long files and speaker identification
+
+        Workflow:
+        1. POST /job/init -> get job_id
+        2. POST /job/v1/upload-files -> get Azure URLs
+        3. PUT to Azure Blob Storage
+        4. POST /job/v1/{job_id}/start -> trigger processing
+        5. Poll GET /job/{job_id}/status -> wait for completion
+        6. POST /job/v1/download-files -> get download URLs
+        7. Download results from Azure
+
+        SECURITY: Guaranteed cleanup with finally block, request timeouts
+        """
+        output_dir = None
+
+        try:
+            # Step 1: Initialize job
+            logger.info("Initializing Batch API job...")
+            init_response = requests.post(
+                f"{self.API_BASE_URL}/speech-to-text/job/init",
+                headers={
+                    "api-subscription-key": self.api_key,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "job_parameters": {
+                        "language_code": language_code,
+                        "with_diarization": True,
+                        "with_timestamps": True
+                    }
+                },
+                timeout=self.REQUEST_TIMEOUT
+            )
+            init_response.raise_for_status()
+            init_data = init_response.json()
+            job_id = init_data['job_id']
+            logger.info(f"Job initialized: {job_id}")
+
+            # Step 2: Get upload links for specific filename
+            filename = os.path.basename(file_path)
+            logger.info(f"Getting upload link for {filename}...")
+            upload_response = requests.post(
+                f"{self.API_BASE_URL}/speech-to-text/job/v1/upload-files",
+                headers={
+                    "api-subscription-key": self.api_key,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "job_id": job_id,
+                    "files": [filename]
+                },
+                timeout=self.REQUEST_TIMEOUT
+            )
+            upload_response.raise_for_status()
+            upload_data = upload_response.json()
+            upload_url = upload_data['upload_urls'][filename]['file_url']
+
+            # Step 3: Upload file to Azure Blob Storage
+            logger.info(f"Uploading {filename} to Azure Blob Storage...")
+            with open(file_path, 'rb') as f:
+                azure_response = requests.put(
+                    upload_url,
+                    data=f,
+                    headers={
+                        "x-ms-blob-type": "BlockBlob",
+                        "Content-Type": "audio/wav"
+                    },
+                    timeout=self.UPLOAD_TIMEOUT
+                )
+                if azure_response.status_code not in [200, 201]:
+                    raise Exception(f"Azure upload failed: {azure_response.status_code} - {azure_response.text}")
+            logger.info("Upload successful")
+
+            # Step 4: Start the job
+            logger.info("Starting transcription job...")
+            start_response = requests.post(
+                f"{self.API_BASE_URL}/speech-to-text/job/v1/{job_id}/start",
+                headers={"api-subscription-key": self.api_key},
+                timeout=self.REQUEST_TIMEOUT
+            )
+            start_response.raise_for_status()
+            logger.info("Job started")
+
+            # Step 5: Poll for completion
+            logger.info("Waiting for transcription to complete...")
+            poll_interval = self.INITIAL_POLL_INTERVAL
+            start_time = time.time()
+
+            while True:
+                elapsed = time.time() - start_time
+                if elapsed > self.DEFAULT_TRANSCRIPTION_TIMEOUT:
+                    raise Exception(f"Transcription timed out after {self.DEFAULT_TRANSCRIPTION_TIMEOUT}s")
+
+                status_response = requests.get(
+                    f"{self.API_BASE_URL}/speech-to-text/job/{job_id}/status",
+                    headers={"api-subscription-key": self.api_key},
+                    timeout=self.REQUEST_TIMEOUT
+                )
+                status_response.raise_for_status()
+                status_data = status_response.json()
+                job_state = status_data['job_state']
+
+                logger.info(f"Job state: {job_state} (elapsed: {int(elapsed)}s)")
+
+                if job_state.lower() == 'completed':
+                    logger.info("Job completed successfully")
+                    break
+                elif job_state.lower() == 'failed':
+                    error_msg = status_data.get('error_message', 'Unknown error')
+                    raise Exception(f"Transcription job failed: {error_msg}")
+
+                time.sleep(poll_interval)
+                poll_interval = min(poll_interval * 2, self.MAX_POLL_INTERVAL)
+
+            # Step 6: Get download links
+            output_files = []
+            for detail in status_data.get('job_details', []):
+                if detail.get('outputs'):
+                    output_files.append(detail['outputs'][0]['file_name'])
+
+            if not output_files:
+                raise Exception("No output files found in completed job")
+
+            logger.info(f"Getting download links for {len(output_files)} file(s)...")
+            download_response = requests.post(
+                f"{self.API_BASE_URL}/speech-to-text/job/v1/download-files",
+                headers={
+                    "api-subscription-key": self.api_key,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "job_id": job_id,
+                    "files": output_files
+                },
+                timeout=self.REQUEST_TIMEOUT
+            )
+            download_response.raise_for_status()
+            download_data = download_response.json()
+
+            # Step 7: Download results
+            output_dir = tempfile.mkdtemp()
+            logger.info(f"Downloading results to {output_dir}...")
+
+            for output_file in output_files:
+                download_url = download_data['download_urls'][output_file]['file_url']
+                result_response = requests.get(download_url, timeout=self.REQUEST_TIMEOUT)
+                result_response.raise_for_status()
+
+                result_path = os.path.join(output_dir, output_file)
+                with open(result_path, 'wb') as f:
+                    f.write(result_response.content)
+
+            # Read result file
+            result_files = [f for f in os.listdir(output_dir) if f.endswith('.json')]
+            if not result_files:
+                raise Exception("No transcription results found")
+
+            result_path = os.path.join(output_dir, result_files[0])
+            with open(result_path, 'r', encoding='utf-8') as f:
+                import json
+                result = json.load(f)
+
+            logger.info("Batch API transcription completed successfully")
+            return self._process_transcription_result(result, has_diarization=True)
+
+        finally:
+            # Cleanup temp directory
+            if output_dir and os.path.exists(output_dir):
+                import shutil
+                try:
+                    shutil.rmtree(output_dir)
+                    logger.info(f"Cleaned up temp directory: {output_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup temp directory: {e}")
+
     def _sanitize_response(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Remove sensitive fields from response before logging
@@ -198,12 +391,13 @@ class SarvamClient:
             }
             data = {
                 'model': 'saarika:v2.5',  # Sarvam's transcription model (latest)
-                'language_code': language_code
+                'language_code': language_code,
+                'with_timestamps': 'true'  # Always include timestamps
             }
 
             # Add diarization flag if requested
             if enable_speaker_diarization:
-                data['enable_diarization'] = 'true'
+                data['with_diarization'] = 'true'
 
             # Remove Content-Type header for multipart upload
             headers = {k: v for k, v in self.session.headers.items() if k != 'Content-Type'}
@@ -216,6 +410,12 @@ class SarvamClient:
                 headers=headers,
                 timeout=self.UPLOAD_TIMEOUT  # SECURITY: Prevent indefinite hangs
             )
+
+            # Log response for debugging
+            logger.info(f"Sarvam API response status: {response.status_code}")
+            if response.status_code >= 400:
+                logger.error(f"Sarvam API error response: {response.text}")
+
             response.raise_for_status()
 
         result = response.json()
