@@ -393,6 +393,126 @@ def process_timeline(job_id):
 
         raise  # Let error_handler decorator handle the response
 
+@app.route('/process-shortform/<job_id>', methods=['POST'])
+@require_auth()
+@require_rate_limit("2 per minute, 20 per hour")
+@error_handler
+def process_shortform(job_id):
+    """Submit short-form content generation to background queue"""
+    start_time = time.time()
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        if job_id not in processing_jobs:
+            return jsonify({"error": "Job not found"}), 404
+
+        job = processing_jobs[job_id]
+
+        if job["status"] != "uploaded":
+            return jsonify({"error": f"Job status is {job['status']}, cannot process"}), 400
+
+        # Get and validate options from request
+        options = validate_json_request(request)
+
+        # Extract short-form specific options
+        prompt_type = options.get('prompt_type', 'engaging')
+        target_duration = float(options.get('target_duration', 60.0))
+        language_code = options.get('language_code', 'ml-IN')
+
+        # Validate prompt type
+        valid_prompt_types = ['engaging', 'informative', 'emotional', 'funny', 'tutorial',
+                               'inspirational', 'controversial', 'storytelling']
+        if prompt_type not in valid_prompt_types:
+            return jsonify({
+                "error": f"Invalid prompt_type. Must be one of: {', '.join(valid_prompt_types)}"
+            }), 400
+
+        # Validate target duration (15-180 seconds)
+        if not (15 <= target_duration <= 180):
+            return jsonify({
+                "error": "target_duration must be between 15 and 180 seconds"
+            }), 400
+
+        # Submit short-form processing task
+        from tasks.shortform_processing import process_shortform_content
+
+        task = process_shortform_content.apply_async(
+            args=[job_id, job["audio_file"], job["drt_file"], prompt_type, target_duration, language_code],
+            task_id=f"shortform_{job_id}"
+        )
+
+        task_id = task.id
+
+        # Check if task completed immediately (Celery eager mode)
+        from celery_app import celery_app
+
+        if celery_app.conf.task_always_eager:
+            try:
+                task_result = task.result if hasattr(task, 'result') else None
+
+                if task_result:
+                    logger.info(f"Short-form task {task_id} completed in eager mode")
+                    job_manager.store_task_result(job_id, task_result)
+
+                    job.update({
+                        "status": "completed",
+                        "task_id": task_id,
+                        "progress": 100,
+                        "message": "Short-form content generated successfully",
+                        "submitted_at": datetime.now(),
+                        "completed_at": datetime.now(),
+                        "processing_options": options,
+                        "result": task_result
+                    })
+
+                    return jsonify({
+                        "job_id": job_id,
+                        "task_id": task_id,
+                        "status": "completed",
+                        "message": "Short-form content generated successfully",
+                        "result": task_result
+                    })
+            except Exception as e:
+                logger.warning(f"Could not get eager task result: {str(e)}")
+
+        # Normal async mode
+        job.update({
+            "status": "queued",
+            "task_id": task_id,
+            "progress": 5,
+            "message": "Short-form generation submitted",
+            "submitted_at": datetime.now(),
+            "processing_options": options
+        })
+
+        logger.info(f"Short-form processing job {job_id} submitted with task ID {task_id}")
+
+        return jsonify({
+            "job_id": job_id,
+            "task_id": task_id,
+            "status": "queued",
+            "message": "Short-form content generation submitted to background queue",
+            "estimated_time": "10-20 minutes",
+            "options": {
+                "prompt_type": prompt_type,
+                "target_duration": target_duration,
+                "language_code": language_code
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error submitting short-form processing for job {job_id}: {str(e)}")
+
+        # Update job status on error
+        if job_id in processing_jobs:
+            processing_jobs[job_id].update({
+                "status": "failed",
+                "message": f"Failed to submit for processing: {str(e)}"
+            })
+
+        raise  # Let error_handler decorator handle the response
+
 @app.route('/status/<job_id>', methods=['GET'])
 @require_auth()
 def get_job_status(job_id):
