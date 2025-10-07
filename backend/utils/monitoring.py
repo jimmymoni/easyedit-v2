@@ -298,17 +298,22 @@ def setup_default_health_checks():
             return {'message': f'High memory usage: {memory.percent:.1f}%'}
         return {'message': f'Memory usage OK: {memory.percent:.1f}%'}
 
-    def check_soniox_api():
-        """Check Soniox API connectivity"""
+    def check_sarvam_api():
+        """Check Sarvam AI API connectivity"""
         try:
-            from services.soniox_client import SonioxClient
-            client = SonioxClient()
+            from services.sarvam_client import SarvamClient
+            from config import Config
+
+            if not Config.SARVAM_API_KEY:
+                return {'message': 'Sarvam AI API not configured'}
+
+            client = SarvamClient()
             if client.check_api_status():
-                return {'message': 'Soniox API accessible'}
+                return {'message': 'Sarvam AI API accessible'}
             else:
-                raise Exception('Soniox API not accessible')
+                raise Exception('Sarvam AI API not accessible')
         except Exception as e:
-            raise Exception(f'Soniox API check failed: {str(e)}')
+            raise Exception(f'Sarvam AI API check failed: {str(e)}')
 
     def check_openai_api():
         """Check OpenAI API connectivity"""
@@ -331,7 +336,7 @@ def setup_default_health_checks():
     # Register checks
     health_checker.register_check('disk_space', check_disk_space, timeout=2.0)
     health_checker.register_check('memory', check_memory, timeout=2.0)
-    health_checker.register_check('soniox_api', check_soniox_api, timeout=10.0)
+    health_checker.register_check('sarvam_api', check_sarvam_api, timeout=10.0)
     health_checker.register_check('openai_api', check_openai_api, timeout=5.0)
 
 def setup_monitoring(app):

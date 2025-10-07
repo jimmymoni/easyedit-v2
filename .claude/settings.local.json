@@ -10,7 +10,8 @@
       "Bash(curl http://localhost:5000/auth/demo-token)",
       "Bash(npm run dev:*)",
       "Bash(python:*)",
-      "Bash(npx shadcn@latest add:*)"
+      "Bash(npx shadcn@latest add:*)",
+      "Read(//c/Users/Tomso/Downloads/**)"
     ],
     "deny": [],
     "ask": []

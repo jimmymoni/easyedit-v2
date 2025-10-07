@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from config import Config
 from parsers.drt_parser import DRTParser
 from parsers.drt_writer import DRTWriter
-from services.soniox_client import SonioxClient
+from services.sarvam_client import SarvamClient
 try:
     from services.audio_analyzer import AudioAnalyzer
 except ImportError:
@@ -25,7 +25,7 @@ from utils import (
     setup_logging, setup_error_handlers, setup_monitoring,
     error_handler, validate_file_upload, validate_processing_options, validate_job_id,
     validate_json_request, sanitize_filename, log_performance,
-    system_monitor, health_checker, with_circuit_breaker, soniox_circuit_breaker,
+    system_monitor, health_checker, with_circuit_breaker,
     openai_circuit_breaker, RequestLogger
 )
 

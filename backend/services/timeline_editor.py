@@ -6,7 +6,7 @@ from datetime import datetime
 from models.timeline import Timeline, Track, Clip
 from parsers.drt_parser import DRTParser
 from parsers.drt_writer import DRTWriter
-from services.soniox_client import SonioxClient
+from services.transcription_service import TranscriptionServiceFactory
 try:
     from services.audio_analyzer import AudioAnalyzer
 except ImportError:
@@ -26,7 +26,12 @@ class TimelineEditingEngine:
     def __init__(self):
         self.drt_parser = DRTParser()
         self.drt_writer = DRTWriter()
-        self.soniox_client = SonioxClient() if Config.SONIOX_API_KEY else None
+        # Transcription service now uses factory pattern
+        try:
+            self.transcription_service = TranscriptionServiceFactory.create()
+        except ValueError:
+            # No API key configured
+            self.transcription_service = None
         # Note: AudioAnalyzer now uses context manager - create instances as needed
         self.edit_engine = EditRulesEngine()
 
@@ -97,7 +102,7 @@ class TimelineEditingEngine:
 
             # Stage 3: Transcription (optional)
             transcription_result = None
-            if processing_options.get('enable_transcription', True) and self.soniox_client:
+            if processing_options.get('enable_transcription', True) and self.transcription_service:
                 logger.info("Stage 3: Audio transcription")
                 stage_start = datetime.now()
 
@@ -181,7 +186,7 @@ class TimelineEditingEngine:
     def _get_default_options(self) -> Dict[str, Any]:
         """Get default processing options"""
         return {
-            'enable_transcription': bool(Config.SONIOX_API_KEY),
+            'enable_transcription': bool(Config.SARVAM_API_KEY),
             'enable_speaker_diarization': True,
             'remove_silence': True,
             'split_on_speaker_change': True,
@@ -269,20 +274,20 @@ class TimelineEditingEngine:
                               enable_speaker_diarization: bool) -> Dict[str, Any]:
         """Perform audio transcription with speaker diarization"""
         try:
-            if not self.soniox_client:
+            if not self.transcription_service:
                 return {
                     'success': False,
-                    'error': 'Soniox API not configured'
+                    'error': 'Transcription API not configured'
                 }
 
-            transcription_data = self.soniox_client.transcribe_audio(
+            transcription_data = self.transcription_service.transcribe_audio(
                 audio_file_path,
                 enable_speaker_diarization
             )
 
             # Get additional analysis from transcription
-            speaker_segments = self.soniox_client.get_speaker_segments(transcription_data)
-            silence_hints = self.soniox_client.get_silence_detection_hints(transcription_data)
+            speaker_segments = self.transcription_service.get_speaker_segments(transcription_data)
+            silence_hints = self.transcription_service.get_silence_detection_hints(transcription_data)
 
             stats = {
                 'transcript_length': len(transcription_data.get('transcript', '')),

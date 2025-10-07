@@ -11,7 +11,7 @@ from .error_handlers import (
     validate_json_request,
     sanitize_filename,
     with_circuit_breaker,
-    soniox_circuit_breaker,
+    sarvam_circuit_breaker,
     openai_circuit_breaker
 )
 from .rate_limiter import (
@@ -36,7 +36,7 @@ __all__ = [
     'setup_error_handlers', 'error_handler', 'APIError', 'ValidationError',
     'ProcessingError', 'validate_file_upload', 'validate_processing_options',
     'validate_job_id', 'validate_json_request', 'sanitize_filename',
-    'with_circuit_breaker', 'soniox_circuit_breaker', 'openai_circuit_breaker',
+    'with_circuit_breaker', 'sarvam_circuit_breaker', 'openai_circuit_breaker',
 
     # Rate limiting
     'rate_limiter', 'require_rate_limit', 'get_rate_limit_status',

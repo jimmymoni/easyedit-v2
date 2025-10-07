@@ -6,14 +6,8 @@ load_dotenv()
 
 class Config:
     # API Keys
-    SONIOX_API_KEY = os.getenv('SONIOX_API_KEY')
-    SARVAM_API_KEY = os.getenv('SARVAM_API_KEY')
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-
-    # Transcription Provider Selection
-    # Options: 'soniox', 'sarvam', 'auto'
-    # 'auto' selects Sarvam if available (cheaper), falls back to Soniox
-    TRANSCRIPTION_PROVIDER = os.getenv('TRANSCRIPTION_PROVIDER', 'auto')
+    SARVAM_API_KEY = os.getenv('SARVAM_API_KEY')  # Sarvam AI for Malayalam/English transcription
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # OpenAI for AI enhancements
 
     # Flask Configuration
     SECRET_KEY = os.getenv('SECRET_KEY') or secrets.token_hex(32)

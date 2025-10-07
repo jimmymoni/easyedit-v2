@@ -1,4 +1,4 @@
-from .soniox_client import SonioxClient
+from .sarvam_client import SarvamClient
 try:
     from .audio_analyzer import AudioAnalyzer
 except ImportError:
@@ -9,4 +9,4 @@ from .timeline_editor import TimelineEditingEngine
 from .openai_client import OpenAIClient
 from .ai_enhancer import AIEnhancementService
 
-__all__ = ['SonioxClient', 'AudioAnalyzer', 'EditRulesEngine', 'TimelineEditingEngine', 'OpenAIClient', 'AIEnhancementService']
+__all__ = ['SarvamClient', 'AudioAnalyzer', 'EditRulesEngine', 'TimelineEditingEngine', 'OpenAIClient', 'AIEnhancementService']

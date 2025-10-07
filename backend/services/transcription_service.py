@@ -137,39 +137,6 @@ class TranscriptionService(ABC):
         return silence_gaps
 
 
-class SonioxAdapter(TranscriptionService):
-    """Adapter for Soniox Speech-to-Text API"""
-
-    def __init__(self, api_key: Optional[str] = None):
-        super().__init__(api_key)
-        from services.soniox_client import SonioxClient
-        self.client = SonioxClient(api_key or Config.SONIOX_API_KEY)
-        self.provider_name = 'soniox'
-
-    def transcribe_audio(
-        self,
-        audio_file_path: str,
-        enable_speaker_diarization: bool = True,
-        language_code: str = None
-    ) -> Dict[str, Any]:
-        """Transcribe using Soniox API and normalize response"""
-        # Soniox client returns already normalized format
-        result = self.client.transcribe_audio(
-            audio_file_path=audio_file_path,
-            enable_speaker_diarization=enable_speaker_diarization
-        )
-
-        # Add provider metadata
-        result['provider'] = self.provider_name
-        result['language'] = language_code or 'auto'
-
-        return result
-
-    def check_api_status(self) -> bool:
-        """Check Soniox API accessibility"""
-        return self.client.check_api_status()
-
-
 class SarvamAdapter(TranscriptionService):
     """Adapter for Sarvam AI Speech-to-Text API"""
 
@@ -211,137 +178,72 @@ class TranscriptionServiceFactory:
     """
     Factory for creating transcription service instances
 
-    Handles provider selection based on:
-    1. Explicit provider parameter
-    2. TRANSCRIPTION_PROVIDER environment variable
-    3. Available API keys (fallback logic)
+    Currently supports only Sarvam AI for Malayalam/English transcription.
+    Architecture allows easy addition of more providers in the future.
     """
 
     PROVIDERS = {
-        'soniox': SonioxAdapter,
         'sarvam': SarvamAdapter
     }
 
     @classmethod
     def create(cls, provider: Optional[str] = None) -> TranscriptionService:
         """
-        Create a transcription service instance
+        Create a Sarvam AI transcription service instance
 
         Args:
-            provider: Provider name ('soniox', 'sarvam', 'auto', or None)
-                     If None, uses TRANSCRIPTION_PROVIDER from config
-                     If 'auto', selects based on available API keys
+            provider: Provider name (only 'sarvam' supported currently)
+                     For backwards compatibility, accepts 'auto' which uses Sarvam
 
         Returns:
-            TranscriptionService instance
+            SarvamAdapter instance
 
         Raises:
-            ValueError: If provider is invalid or no API keys available
+            ValueError: If SARVAM_API_KEY not configured
         """
-        # Determine which provider to use
-        selected_provider = provider or Config.TRANSCRIPTION_PROVIDER
-
-        # Handle 'auto' selection based on available API keys
-        if selected_provider == 'auto':
-            selected_provider = cls._auto_select_provider()
-
-        # Validate provider
-        if selected_provider not in cls.PROVIDERS:
-            available = ', '.join(cls.PROVIDERS.keys())
-            raise ValueError(
-                f"Invalid transcription provider: '{selected_provider}'. "
-                f"Available providers: {available}, auto"
-            )
-
-        # Get provider class and check API key
-        adapter_class = cls.PROVIDERS[selected_provider]
+        # Always use Sarvam (ignore provider parameter for simplicity)
+        selected_provider = 'sarvam'
 
         # Check if API key is available
-        if selected_provider == 'soniox' and not Config.SONIOX_API_KEY:
+        if not Config.SARVAM_API_KEY:
             raise ValueError(
-                "Soniox provider selected but SONIOX_API_KEY not configured. "
-                "Set SONIOX_API_KEY in your .env file or choose a different provider."
-            )
-
-        if selected_provider == 'sarvam' and not Config.SARVAM_API_KEY:
-            raise ValueError(
-                "Sarvam provider selected but SARVAM_API_KEY not configured. "
-                "Set SARVAM_API_KEY in your .env file or choose a different provider."
+                "Sarvam AI API key not configured. "
+                "Set SARVAM_API_KEY in your .env file to enable transcription.\n"
+                "Get your free API key (₹1,000 credits) at https://www.sarvam.ai/"
             )
 
         # Create and return instance
-        logger.info(f"Creating transcription service with provider: {selected_provider}")
-        return adapter_class()
+        logger.info(f"Creating Sarvam AI transcription service")
+        return SarvamAdapter()
 
     @classmethod
     def _auto_select_provider(cls) -> str:
         """
-        Automatically select the best available provider
+        Auto-select provider (always returns 'sarvam')
 
-        Priority order:
-        1. Sarvam (cheaper, optimized for Indian languages)
-        2. Soniox (fallback, more expensive but high quality)
-
-        Returns:
-            Provider name
-
-        Raises:
-            ValueError: If no API keys are configured
+        Kept for backwards compatibility.
         """
-        # Prefer Sarvam (cheaper and optimized for Malayalam/English)
-        if Config.SARVAM_API_KEY:
-            logger.info("Auto-selected Sarvam AI (cost-effective, Indian language optimized)")
-            return 'sarvam'
-
-        # Fallback to Soniox
-        if Config.SONIOX_API_KEY:
-            logger.info("Auto-selected Soniox (Sarvam API key not available)")
-            return 'soniox'
-
-        # No providers available
-        raise ValueError(
-            "No transcription API keys configured. "
-            "Please set SARVAM_API_KEY or SONIOX_API_KEY in your .env file. "
-            "Sarvam is recommended (66% cheaper, optimized for Malayalam/English)."
-        )
+        return 'sarvam'
 
     @classmethod
     def get_available_providers(cls) -> List[str]:
         """
-        Get list of providers with valid API keys configured
+        Get list of available providers
 
         Returns:
-            List of available provider names
+            List containing 'sarvam' if API key is configured
         """
-        available = []
-
-        if Config.SONIOX_API_KEY:
-            available.append('soniox')
-
-        if Config.SARVAM_API_KEY:
-            available.append('sarvam')
-
-        return available
+        return ['sarvam'] if Config.SARVAM_API_KEY else []
 
     @classmethod
     def get_provider_info(cls) -> Dict[str, Dict[str, Any]]:
         """
-        Get information about all supported providers
+        Get information about Sarvam AI provider
 
         Returns:
             Dictionary with provider details (cost, features, etc.)
         """
         return {
-            'soniox': {
-                'name': 'Soniox',
-                'cost_per_hour': 1.02,  # USD
-                'currency': 'USD',
-                'languages': '60+',
-                'features': ['speaker_diarization', 'multilingual', 'high_accuracy'],
-                'best_for': 'High-accuracy multilingual transcription',
-                'api_key_env': 'SONIOX_API_KEY',
-                'configured': bool(Config.SONIOX_API_KEY)
-            },
             'sarvam': {
                 'name': 'Sarvam AI',
                 'cost_per_hour': 0.36,  # USD (Rs. 30)
@@ -351,6 +253,7 @@ class TranscriptionServiceFactory:
                 'best_for': 'Malayalam/English code-mixed speech, Indian accents',
                 'api_key_env': 'SARVAM_API_KEY',
                 'free_credits': '₹1,000 (~33 hours)',
+                'signup_url': 'https://www.sarvam.ai/',
                 'configured': bool(Config.SARVAM_API_KEY)
             }
         }

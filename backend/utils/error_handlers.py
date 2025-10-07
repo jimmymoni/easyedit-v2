@@ -383,7 +383,7 @@ class CircuitBreaker:
             raise e
 
 # Create circuit breakers for external services
-soniox_circuit_breaker = CircuitBreaker(failure_threshold=3, timeout=120)
+sarvam_circuit_breaker = CircuitBreaker(failure_threshold=3, timeout=120)
 openai_circuit_breaker = CircuitBreaker(failure_threshold=5, timeout=300)
 
 def with_circuit_breaker(circuit_breaker: CircuitBreaker):

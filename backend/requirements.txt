@@ -19,7 +19,7 @@ soundfile==0.12.1
 
 # AI and external APIs
 openai==1.3.8
-# Soniox: Using REST API directly via requests (no SDK needed)
+# Sarvam AI: Using REST API directly via requests (no SDK needed)
 
 # Production utilities
 redis==5.0.1
