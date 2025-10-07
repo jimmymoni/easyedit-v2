@@ -161,7 +161,7 @@ Set these for comprehensive testing:
 
 ```bash
 # AI Services (for integration tests)
-export SONIOX_API_KEY="your_soniox_key"
+export SARVAM_API_KEY="your_sarvam_key"
 export OPENAI_API_KEY="your_openai_key"
 
 # Test configuration

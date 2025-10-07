@@ -145,16 +145,16 @@ def sample_transcription_data():
 
 
 @pytest.fixture
-def mock_soniox_response():
-    """Mock response from Soniox API"""
+def mock_sarvam_response():
+    """Mock response from Sarvam AI API"""
     return {
-        'transcript': 'This is a mock transcription from Soniox API for testing.',
+        'transcript': 'This is a mock transcription from Sarvam AI for testing.',
         'segments': [
             {
                 'speaker': 'Speaker1',
                 'start_time': 1.0,
                 'end_time': 5.0,
-                'text': 'This is a mock transcription from Soniox API for testing.',
+                'text': 'This is a mock transcription from Sarvam AI for testing.',
                 'confidence': 0.92,
             }
         ],

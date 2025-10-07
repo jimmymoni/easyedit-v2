@@ -211,37 +211,28 @@ class HealthChecker:
         start_time = time.time()
 
         try:
-            # Run the check function with timeout
-            import signal
+            # Run the check function with timeout (cross-platform using threading)
+            import concurrent.futures
 
-            def timeout_handler(signum, frame):
-                raise TimeoutError("Health check timed out")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(check_info['function'])
+                try:
+                    result = future.result(timeout=check_info['timeout'])
+                    duration = time.time() - start_time
 
-            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(int(check_info['timeout']))
-
-            try:
-                result = check_info['function']()
-                signal.alarm(0)  # Cancel the alarm
-            finally:
-                signal.signal(signal.SIGALRM, old_handler)
-
-            duration = time.time() - start_time
-
-            check_result = {
-                'status': 'healthy',
-                'duration': duration,
-                'timestamp': time.time(),
-                **result
-            }
-
-        except TimeoutError:
-            check_result = {
-                'status': 'timeout',
-                'message': f'Health check timed out after {check_info["timeout"]}s',
-                'duration': time.time() - start_time,
-                'timestamp': time.time()
-            }
+                    check_result = {
+                        'status': 'healthy',
+                        'duration': duration,
+                        'timestamp': time.time(),
+                        **result
+                    }
+                except concurrent.futures.TimeoutError:
+                    check_result = {
+                        'status': 'timeout',
+                        'message': f'Health check timed out after {check_info["timeout"]}s',
+                        'duration': time.time() - start_time,
+                        'timestamp': time.time()
+                    }
 
         except Exception as e:
             check_result = {

@@ -187,7 +187,7 @@ class TestTimelineProcessingIntegration:
         assert output_timeline is not None
         assert len(output_timeline.tracks) > 0
 
-    @patch('services.soniox_client.SonioxClient.transcribe_audio')
+    @patch('services.sarvam_client.SarvamClient.transcribe_audio')
     def test_processing_with_mock_transcription(self, mock_transcribe, timeline_editor, real_audio_file, realistic_drt_file):
         """Test processing pipeline with mocked transcription"""
         # Mock transcription response

@@ -3,21 +3,21 @@ import os
 from unittest.mock import Mock, patch, MagicMock
 import json
 
-from services.soniox_client import SonioxClient
+from services.sarvam_client import SarvamClient
 from services.openai_client import OpenAIClient
 from services.ai_enhancer import AIEnhancementService
 
-class TestSonioxClient:
-    """Test cases for SonioxClient"""
+class TestSarvamClient:
+    """Test cases for SarvamClient"""
 
     @pytest.fixture
-    def soniox_client(self):
-        """Create SonioxClient with mock API key"""
-        with patch('services.soniox_client.Config.SONIOX_API_KEY', 'test_api_key'):
-            return SonioxClient()
+    def sarvam_client(self):
+        """Create SarvamClient with mock API key"""
+        with patch('services.sarvam_client.Config.SARVAM_API_KEY', 'test_api_key'):
+            return SarvamClient()
 
-    @patch('services.soniox_client.requests.Session.post')
-    def test_start_transcription_job_success(self, mock_post, soniox_client, temp_dir):
+    @patch('services.sarvam_client.requests.Session.post')
+    def test_start_transcription_job_success(self, mock_post, sarvam_client, temp_dir):
         """Test successful transcription job start"""
         # Mock successful response
         mock_response = Mock()
@@ -30,13 +30,13 @@ class TestSonioxClient:
         with open(audio_file, 'wb') as f:
             f.write(b'dummy audio data')
 
-        job_id = soniox_client._start_transcription_job(audio_file, True)
+        job_id = sarvam_client._start_transcription_job(audio_file, True)
 
         assert job_id == 'job_123'
         mock_post.assert_called_once()
 
-    @patch('services.soniox_client.requests.Session.post')
-    def test_start_transcription_job_failure(self, mock_post, soniox_client, temp_dir):
+    @patch('services.sarvam_client.requests.Session.post')
+    def test_start_transcription_job_failure(self, mock_post, sarvam_client, temp_dir):
         """Test transcription job start failure"""
         # Mock failed response
         mock_response = Mock()
@@ -49,12 +49,12 @@ class TestSonioxClient:
         with open(audio_file, 'wb') as f:
             f.write(b'dummy audio data')
 
-        job_id = soniox_client._start_transcription_job(audio_file, True)
+        job_id = sarvam_client._start_transcription_job(audio_file, True)
 
         assert job_id is None
 
-    @patch('services.soniox_client.requests.Session.get')
-    def test_poll_transcription_job_completed(self, mock_get, soniox_client):
+    @patch('services.sarvam_client.requests.Session.get')
+    def test_poll_transcription_job_completed(self, mock_get, sarvam_client):
         """Test polling completed transcription job"""
         # Mock completed job response
         mock_response = Mock()
@@ -70,14 +70,14 @@ class TestSonioxClient:
         }
         mock_get.return_value = mock_response
 
-        result = soniox_client._poll_transcription_job('job_123')
+        result = sarvam_client._poll_transcription_job('job_123')
 
         assert result is not None
         assert result['status'] == 'COMPLETED'
         assert 'transcript' in result
 
-    @patch('services.soniox_client.requests.Session.get')
-    def test_poll_transcription_job_failed(self, mock_get, soniox_client):
+    @patch('services.sarvam_client.requests.Session.get')
+    def test_poll_transcription_job_failed(self, mock_get, sarvam_client):
         """Test polling failed transcription job"""
         # Mock failed job response
         mock_response = Mock()
@@ -89,13 +89,13 @@ class TestSonioxClient:
         }
         mock_get.return_value = mock_response
 
-        result = soniox_client._poll_transcription_job('job_123')
+        result = sarvam_client._poll_transcription_job('job_123')
 
         assert result is None
 
-    def test_process_transcription_result(self, soniox_client, mock_soniox_response):
+    def test_process_transcription_result(self, sarvam_client, mock_sarvam_response):
         """Test processing raw transcription result"""
-        processed = soniox_client._process_transcription_result(mock_soniox_response)
+        processed = sarvam_client._process_transcription_result(mock_sarvam_response)
 
         assert isinstance(processed, dict)
         assert 'transcript' in processed
@@ -116,7 +116,7 @@ class TestSonioxClient:
             assert 'text' in segment
             assert 'words' in segment
 
-    def test_get_speaker_segments(self, soniox_client):
+    def test_get_speaker_segments(self, sarvam_client):
         """Test extracting speaker segments"""
         transcription_result = {
             'segments': [
@@ -139,7 +139,7 @@ class TestSonioxClient:
             ]
         }
 
-        speaker_segments = soniox_client.get_speaker_segments(transcription_result)
+        speaker_segments = sarvam_client.get_speaker_segments(transcription_result)
 
         assert len(speaker_segments) == 2
         assert speaker_segments[0]['speaker'] == 'Speaker1'
@@ -147,7 +147,7 @@ class TestSonioxClient:
         assert speaker_segments[0]['duration'] == 5.0
         assert speaker_segments[1]['duration'] == 4.0
 
-    def test_get_silence_detection_hints(self, soniox_client):
+    def test_get_silence_detection_hints(self, sarvam_client):
         """Test getting silence detection hints from transcription"""
         transcription_result = {
             'segments': [
@@ -157,7 +157,7 @@ class TestSonioxClient:
             ]
         }
 
-        silence_gaps = soniox_client.get_silence_detection_hints(
+        silence_gaps = sarvam_client.get_silence_detection_hints(
             transcription_result,
             min_gap_seconds=2.0
         )
@@ -167,20 +167,20 @@ class TestSonioxClient:
         assert silence_gaps[0]['end_time'] == 8.0
         assert silence_gaps[0]['duration'] == 3.0
 
-    @patch('services.soniox_client.requests.Session.get')
-    def test_check_api_status(self, mock_get, soniox_client):
+    @patch('services.sarvam_client.requests.Session.get')
+    def test_check_api_status(self, mock_get, sarvam_client):
         """Test API status check"""
         # Mock successful response
         mock_response = Mock()
         mock_response.status_code = 200
         mock_get.return_value = mock_response
 
-        status = soniox_client.check_api_status()
+        status = sarvam_client.check_api_status()
         assert status == True
 
         # Mock failed response
         mock_response.status_code = 500
-        status = soniox_client.check_api_status()
+        status = sarvam_client.check_api_status()
         assert status == False
 
 class TestOpenAIClient:
