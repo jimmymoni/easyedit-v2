@@ -1,7 +1,7 @@
 """
 Transcription Service Abstraction Layer
 
-Provides a unified interface for multiple speech-to-text providers (Soniox, Sarvam, etc.)
+Provides a unified interface for multiple speech-to-text providers (Sarvam, etc.)
 Uses adapter pattern to normalize different API responses into a standard format.
 
 Architecture Benefits:
@@ -70,7 +70,7 @@ class TranscriptionService(ABC):
                 'confidence': float,         # Overall confidence (0-1)
                 'word_count': int,          # Total words transcribed
                 'language': str,            # Detected/used language
-                'provider': str             # Provider name (soniox, sarvam, etc.)
+                'provider': str             # Provider name (sarvam, etc.)
             }
         """
         pass

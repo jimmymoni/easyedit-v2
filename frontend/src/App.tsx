@@ -318,7 +318,7 @@ function App() {
               </div>
               <h3 className="font-semibold text-foreground mb-2.5 text-base">AI Processing</h3>
               <p className="text-muted-foreground text-sm leading-relaxed">
-                Our AI analyzes your audio using Soniox API for transcription, detects speakers, removes silence, and applies intelligent editing rules.
+                Our AI analyzes your audio using Sarvam AI for transcription, detects speakers, removes silence, and applies intelligent editing rules.
               </p>
             </div>
 
@@ -341,7 +341,7 @@ function App() {
           <div className="text-center text-muted-foreground text-sm">
             <p className="font-medium">© 2024 EasyEdit v2. Built for video editors, powered by AI.</p>
             <p className="mt-2.5 text-xs">
-              Uses Soniox API for transcription and OpenAI for enhancement features.
+              Uses Sarvam AI for transcription and OpenAI for enhancement features.
             </p>
           </div>
         </div>

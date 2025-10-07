@@ -372,7 +372,7 @@ def analyze_audio_task(self, audio_file_path: str, analysis_options: dict):
 def transcribe_audio_task(self, audio_file_path: str, options: dict):
     """
     Background task for audio transcription
-    Uses configured transcription provider (Soniox, Sarvam, or auto-select)
+    Uses Sarvam AI for speech-to-text transcription
     """
     try:
         self.update_state(
