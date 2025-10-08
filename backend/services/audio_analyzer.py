@@ -1,4 +1,10 @@
-import librosa
+# librosa import is optional - only needed for legacy AudioAnalyzer class
+try:
+    import librosa
+    LIBROSA_AVAILABLE = True
+except ImportError:
+    LIBROSA_AVAILABLE = False
+
 import numpy as np
 from scipy.signal import find_peaks
 from typing import List, Dict, Any, Tuple, Optional

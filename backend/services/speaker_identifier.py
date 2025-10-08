@@ -7,9 +7,10 @@ Builds speaker continuity map across chunks for conversation tracking
 import logging
 import os
 import tempfile
+import soundfile as sf
+import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
-from pydub import AudioSegment
 
 from services.timeline_chunker import TimelineChunk
 from services.sarvam_client import SarvamClient
@@ -92,16 +93,17 @@ class SpeakerIdentifierService:
         """
         logger.info(f"Processing {len(chunks)} chunks for speaker identification...")
 
-        # Load audio file
+        # Load audio file with soundfile
         try:
-            audio = AudioSegment.from_file(self.audio_file_path)
+            audio_data, sample_rate = sf.read(self.audio_file_path)
+            logger.info(f"Loaded audio: {len(audio_data)} samples at {sample_rate}Hz")
         except Exception as e:
             logger.error(f"Failed to load audio file: {e}")
             raise
 
         # Process each chunk
         for chunk in chunks:
-            chunk_result = self._process_single_chunk(chunk, audio)
+            chunk_result = self._process_single_chunk(chunk, audio_data, sample_rate)
             if chunk_result:
                 self.chunk_results.append(chunk_result)
 
@@ -119,14 +121,16 @@ class SpeakerIdentifierService:
     def _process_single_chunk(
         self,
         chunk: TimelineChunk,
-        audio: AudioSegment
+        audio_data: np.ndarray,
+        sample_rate: int
     ) -> Optional[Dict[str, Any]]:
         """
         Process a single chunk with Sarvam API
 
         Args:
             chunk: TimelineChunk to process
-            audio: Full AudioSegment
+            audio_data: Full audio as numpy array
+            sample_rate: Audio sample rate
 
         Returns:
             Chunk result dictionary or None if failed
@@ -139,7 +143,7 @@ class SpeakerIdentifierService:
         # Extract audio segment for this chunk
         chunk_audio_path = None
         try:
-            chunk_audio_path = self._extract_chunk_audio(chunk, audio)
+            chunk_audio_path = self._extract_chunk_audio(chunk, audio_data, sample_rate)
 
             # Transcribe with Sarvam API (with speaker diarization)
             result = self.sarvam_client.transcribe_audio(
@@ -178,24 +182,26 @@ class SpeakerIdentifierService:
     def _extract_chunk_audio(
         self,
         chunk: TimelineChunk,
-        audio: AudioSegment
+        audio_data: np.ndarray,
+        sample_rate: int
     ) -> str:
         """
         Extract audio segment for chunk and save to temp file
 
         Args:
             chunk: TimelineChunk to extract
-            audio: Full AudioSegment
+            audio_data: Full audio as numpy array
+            sample_rate: Audio sample rate
 
         Returns:
             Path to temporary audio file
         """
-        # Convert seconds to milliseconds
-        start_ms = int(chunk.start_time * 1000)
-        end_ms = int(chunk.end_time * 1000)
+        # Convert seconds to sample indices
+        start_sample = int(chunk.start_time * sample_rate)
+        end_sample = int(chunk.end_time * sample_rate)
 
         # Extract segment
-        chunk_audio = audio[start_ms:end_ms]
+        chunk_audio = audio_data[start_sample:end_sample]
 
         # Save to temp file
         temp_file = tempfile.NamedTemporaryFile(
@@ -203,7 +209,7 @@ class SpeakerIdentifierService:
             suffix='.wav',
             prefix=f'chunk_{chunk.chunk_index}_'
         )
-        chunk_audio.export(temp_file.name, format='wav')
+        sf.write(temp_file.name, chunk_audio, sample_rate)
 
         logger.debug(f"Extracted chunk audio: {temp_file.name}")
         return temp_file.name
