@@ -127,7 +127,8 @@ class SarvamClient:
         abs_path = os.path.abspath(file_path)
         allowed_dirs = [
             os.path.abspath(Config.UPLOAD_FOLDER),
-            os.path.abspath(Config.TEMP_FOLDER)
+            os.path.abspath(Config.TEMP_FOLDER),
+            os.path.abspath(tempfile.gettempdir())  # Allow system temp directory for chunk processing
         ]
 
         if not any(abs_path.startswith(allowed_dir) for allowed_dir in allowed_dirs):
