@@ -16,7 +16,7 @@ from services.timeline_chunker import TimelineChunkerService
 from services.speaker_identifier import SpeakerIdentifierService
 from services.conversation_merger import ConversationMergerService
 from services.shortform_ai_enhancer import ShortFormAIEnhancer, PromptType
-from services.audio_analyzer import SimpleAudioAnalyzer
+from services.simple_audio_analyzer import SimpleAudioAnalyzer
 from config import Config
 
 logger = logging.getLogger(__name__)
