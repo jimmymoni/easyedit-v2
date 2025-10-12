@@ -93,7 +93,7 @@ def process_shortform_content(
         logger.info(f"[{job_id}] Processing chunks for speaker identification...")
         job_manager.update_job_status(
             job_id, 'processing', progress=20,
-            message=f'Processing {len(chunks)} chunks with Sarvam API...'
+            message=f'Processing {len(chunks)} chunks with ElevenLabs Scribe API...'
         )
 
         identifier = SpeakerIdentifierService(audio_file_path, language_code)

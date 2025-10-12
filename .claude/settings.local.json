@@ -12,7 +12,8 @@
       "Bash(python:*)",
       "Bash(npx shadcn@latest add:*)",
       "Read(//c/Users/Tomso/Downloads/**)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

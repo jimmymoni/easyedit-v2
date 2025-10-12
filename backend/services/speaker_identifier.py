@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
 from services.timeline_chunker import TimelineChunk
-from services.sarvam_client import SarvamClient
+from services.elevenlabs_client import ElevenLabsClient
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ class SpeakerIdentifierService:
         """
         self.audio_file_path = audio_file_path
         self.language_code = language_code
-        self.sarvam_client = SarvamClient()
+        self.elevenlabs_client = ElevenLabsClient()
 
         # Results
         self.speaker_segments: List[SpeakerSegment] = []
@@ -145,8 +145,8 @@ class SpeakerIdentifierService:
         try:
             chunk_audio_path = self._extract_chunk_audio(chunk, audio_data, sample_rate)
 
-            # Transcribe with Sarvam API (with speaker diarization)
-            result = self.sarvam_client.transcribe_audio(
+            # Transcribe with ElevenLabs Scribe API (with speaker diarization)
+            result = self.elevenlabs_client.transcribe_audio(
                 audio_file_path=chunk_audio_path,
                 enable_speaker_diarization=True,
                 language_code=self.language_code
@@ -216,14 +216,14 @@ class SpeakerIdentifierService:
 
     def _parse_speaker_segments(
         self,
-        sarvam_result: Dict[str, Any],
+        elevenlabs_result: Dict[str, Any],
         chunk: TimelineChunk
     ) -> List[SpeakerSegment]:
         """
-        Parse speaker segments from Sarvam API result
+        Parse speaker segments from ElevenLabs Scribe API result
 
         Args:
-            sarvam_result: Result from Sarvam API
+            elevenlabs_result: Result from ElevenLabs API
             chunk: TimelineChunk being processed
 
         Returns:
@@ -231,7 +231,7 @@ class SpeakerIdentifierService:
         """
         segments = []
 
-        for segment in sarvam_result.get('segments', []):
+        for segment in elevenlabs_result.get('segments', []):
             # Adjust timestamps to global timeline (add chunk offset)
             global_start = segment.get('start_time', 0.0) + chunk.original_timeline_offset
             global_end = segment.get('end_time', 0.0) + chunk.original_timeline_offset

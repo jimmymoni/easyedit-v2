@@ -6,7 +6,8 @@ load_dotenv()
 
 class Config:
     # API Keys
-    SARVAM_API_KEY = os.getenv('SARVAM_API_KEY')  # Sarvam AI for Malayalam/English transcription
+    SARVAM_API_KEY = os.getenv('SARVAM_API_KEY')  # Sarvam AI for Malayalam/English transcription (legacy)
+    ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')  # ElevenLabs Scribe for transcription + diarization
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # OpenAI for AI enhancements
 
     # Flask Configuration
