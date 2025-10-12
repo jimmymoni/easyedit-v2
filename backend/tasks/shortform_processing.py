@@ -60,7 +60,7 @@ def process_shortform_content(
         job_manager.update_job_status(job_id, 'processing', progress=5, message='Parsing timeline...')
 
         drt_parser = DRTParser()
-        timeline = drt_parser.parse_drt_file(drt_file_path)
+        timeline = drt_parser.parse_file(drt_file_path)
 
         if not timeline:
             raise ValueError("Failed to parse DRT file")
@@ -71,7 +71,8 @@ def process_shortform_content(
         logger.info(f"[{job_id}] Analyzing audio...")
         job_manager.update_job_status(job_id, 'processing', progress=10, message='Analyzing audio...')
 
-        audio_analyzer = SimpleAudioAnalyzer(audio_file_path)
+        audio_analyzer = SimpleAudioAnalyzer()
+        audio_analyzer.load_audio(audio_file_path)
         silence_segments = audio_analyzer.detect_silence(min_silence_duration=0.5)
 
         logger.info(f"[{job_id}] Found {len(silence_segments)} silence segments")

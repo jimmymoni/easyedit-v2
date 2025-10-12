@@ -430,6 +430,50 @@ class JobManager:
 
         return {}
 
+    def update_job_status(self, job_id: str, status: str, progress: int = None, message: str = None, result: dict = None):
+        """
+        Update job status, progress, and message
+
+        Args:
+            job_id: Job identifier
+            status: New status (queued, processing, completed, failed)
+            progress: Progress percentage (0-100)
+            message: Status message
+            result: Result data (for completed jobs)
+        """
+        # Get existing job data
+        job_data = self._get_job_data(job_id)
+
+        if not job_data:
+            # Create new job data if doesn't exist
+            job_data = {
+                'job_id': job_id,
+                'task_id': None,
+                'type': 'unknown',
+                'created_at': datetime.now().isoformat()
+            }
+
+        # Update fields
+        job_data['status'] = status
+        if progress is not None:
+            job_data['progress'] = progress
+        if message is not None:
+            job_data['message'] = message
+        if result is not None:
+            job_data['result'] = result
+
+        # Update timestamp
+        job_data['updated_at'] = datetime.now().isoformat()
+
+        if status == 'completed':
+            job_data['completed_at'] = datetime.now().isoformat()
+        elif status == 'failed':
+            job_data['failed_at'] = datetime.now().isoformat()
+
+        # Store updated data
+        self._store_job_data(job_id, job_data)
+        logger.debug(f"Updated job {job_id}: status={status}, progress={progress}, message={message}")
+
     def store_task_result(self, job_id: str, result: dict):
         """
         Manually store task result (useful for eager mode where result isn't persisted)
