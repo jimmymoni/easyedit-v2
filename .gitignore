@@ -111,6 +111,11 @@ dump.rdb
 *.key
 *.crt
 
+# Google Cloud credentials (SECURITY: never commit service account keys!)
+backend/gcp-credentials/
+*-credentials.json
+*service-account*.json
+
 # Local configuration files
 config.local.py
 settings.local.py
