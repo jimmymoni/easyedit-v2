@@ -53,7 +53,7 @@ const ProcessingOptionsTable: React.FC<ProcessingOptionsProps> = ({
                 <div>
                   <div className="font-medium text-foreground">AI Transcription</div>
                   <div className="text-sm text-muted-foreground mt-0.5">
-                    Speech-to-text analysis using Sarvam AI
+                    Speech-to-text analysis using Soniox API
                   </div>
                 </div>
               </TableCell>
