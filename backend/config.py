@@ -6,8 +6,9 @@ load_dotenv()
 
 class Config:
     # API Keys
-    SARVAM_API_KEY = os.getenv('SARVAM_API_KEY')  # Sarvam AI for Malayalam/English transcription (legacy)
-    ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')  # ElevenLabs Scribe for transcription + diarization
+    # Google Cloud Speech-to-Text V2 for transcription + speaker diarization
+    GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')  # Path to service account JSON
+    GOOGLE_CLOUD_PROJECT = os.getenv('GOOGLE_CLOUD_PROJECT')  # GCP project ID
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # OpenAI for AI enhancements
 
     # Flask Configuration

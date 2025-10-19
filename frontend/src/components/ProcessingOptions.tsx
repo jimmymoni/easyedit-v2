@@ -40,7 +40,7 @@ const ProcessingOptions: React.FC<ProcessingOptionsProps> = ({
               <span className="ml-2 text-sm text-foreground">
                 Enable AI transcription
                 <span className="block text-xs text-muted-foreground">
-                  Uses Soniox API for speech-to-text analysis
+                  Uses Google Cloud Speech-to-Text for speech-to-text analysis
                 </span>
               </span>
             </label>

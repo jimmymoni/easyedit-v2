@@ -1,27 +1,28 @@
 """
 Transcription Service Abstraction Layer
 
-Provides a unified interface for multiple speech-to-text providers (Sarvam, etc.)
+Provides a unified interface for multiple speech-to-text providers (Google Cloud, etc.)
 Uses adapter pattern to normalize different API responses into a standard format.
 
 Architecture Benefits:
 - Provider-agnostic: Switch providers via configuration without code changes
 - Extensible: Add new providers easily by implementing the interface
 - Fallback support: Automatically switch to backup provider if primary fails
-- Cost optimization: Use the cheapest provider that meets quality needs
-- Future-proof: Ready for Google, AWS, Azure transcription services
+- Cost optimization: Use the best provider that meets quality and cost needs
+- Future-proof: Ready for AWS, Azure, or other transcription services
 
 Usage:
     # Automatic provider selection based on config
     service = TranscriptionServiceFactory.create()
 
     # Or specify provider explicitly
-    service = TranscriptionServiceFactory.create(provider='sarvam')
+    service = TranscriptionServiceFactory.create(provider='google_cloud_stt_v2')
 
-    # Transcribe audio
+    # Transcribe audio with speaker diarization
     result = service.transcribe_audio(
         audio_file_path='/path/to/audio.wav',
-        enable_speaker_diarization=True
+        enable_speaker_diarization=True,
+        language_code='ml-IN'  # Malayalam-India
     )
 """
 
@@ -137,14 +138,17 @@ class TranscriptionService(ABC):
         return silence_gaps
 
 
-class SarvamAdapter(TranscriptionService):
-    """Adapter for Sarvam AI Speech-to-Text API"""
+class GoogleCloudSTTAdapter(TranscriptionService):
+    """Adapter for Google Cloud Speech-to-Text V2 API"""
 
-    def __init__(self, api_key: Optional[str] = None):
-        super().__init__(api_key)
-        from services.sarvam_client import SarvamClient
-        self.client = SarvamClient(api_key or Config.SARVAM_API_KEY)
-        self.provider_name = 'sarvam'
+    def __init__(self, credentials_path: Optional[str] = None, project_id: Optional[str] = None):
+        super().__init__(api_key=None)  # Google uses service account, not API key
+        from services.google_stt_client import GoogleSTTClient
+        self.client = GoogleSTTClient(
+            credentials_path=credentials_path or Config.GOOGLE_APPLICATION_CREDENTIALS,
+            project_id=project_id or Config.GOOGLE_CLOUD_PROJECT
+        )
+        self.provider_name = 'google_cloud_stt_v2'
 
     def transcribe_audio(
         self,
@@ -152,25 +156,24 @@ class SarvamAdapter(TranscriptionService):
         enable_speaker_diarization: bool = True,
         language_code: str = None
     ) -> Dict[str, Any]:
-        """Transcribe using Sarvam AI API and normalize response"""
+        """Transcribe using Google Cloud STT V2 and normalize response"""
         # Default to Malayalam-India if not specified
         lang = language_code or 'ml-IN'
 
-        # Sarvam client returns already normalized format
+        # Google client returns already normalized format
         result = self.client.transcribe_audio(
             audio_file_path=audio_file_path,
             enable_speaker_diarization=enable_speaker_diarization,
             language_code=lang
         )
 
-        # Add provider metadata
-        result['provider'] = self.provider_name
+        # Add language metadata (provider already added by client)
         result['language'] = lang
 
         return result
 
     def check_api_status(self) -> bool:
-        """Check Sarvam AI API accessibility"""
+        """Check Google Cloud STT API accessibility"""
         return self.client.check_api_status()
 
 
@@ -178,52 +181,60 @@ class TranscriptionServiceFactory:
     """
     Factory for creating transcription service instances
 
-    Currently supports only Sarvam AI for Malayalam/English transcription.
+    Currently supports Google Cloud Speech-to-Text V2 for Malayalam/English transcription.
     Architecture allows easy addition of more providers in the future.
     """
 
     PROVIDERS = {
-        'sarvam': SarvamAdapter
+        'google': GoogleCloudSTTAdapter,
+        'google_cloud': GoogleCloudSTTAdapter,
+        'google_cloud_stt_v2': GoogleCloudSTTAdapter,
     }
 
     @classmethod
     def create(cls, provider: Optional[str] = None) -> TranscriptionService:
         """
-        Create a Sarvam AI transcription service instance
+        Create a Google Cloud STT V2 transcription service instance
 
         Args:
-            provider: Provider name (only 'sarvam' supported currently)
-                     For backwards compatibility, accepts 'auto' which uses Sarvam
+            provider: Provider name ('google', 'google_cloud', 'google_cloud_stt_v2')
+                     For backwards compatibility, accepts 'auto' which uses Google Cloud
 
         Returns:
-            SarvamAdapter instance
+            GoogleCloudSTTAdapter instance
 
         Raises:
-            ValueError: If SARVAM_API_KEY not configured
+            ValueError: If GOOGLE_APPLICATION_CREDENTIALS not configured
         """
-        # Always use Sarvam (ignore provider parameter for simplicity)
-        selected_provider = 'sarvam'
+        # Always use Google Cloud (ignore provider parameter for simplicity)
+        selected_provider = 'google_cloud_stt_v2'
 
-        # Check if API key is available
-        if not Config.SARVAM_API_KEY:
+        # Check if credentials are available
+        if not Config.GOOGLE_APPLICATION_CREDENTIALS:
             raise ValueError(
-                "Sarvam AI API key not configured. "
-                "Set SARVAM_API_KEY in your .env file to enable transcription.\n"
-                "Get your free API key (₹1,000 credits) at https://www.sarvam.ai/"
+                "Google Cloud credentials not configured. "
+                "Set GOOGLE_APPLICATION_CREDENTIALS in your .env file to enable transcription.\n"
+                "Get started with $300 free credits at https://cloud.google.com/speech-to-text"
+            )
+
+        if not Config.GOOGLE_CLOUD_PROJECT:
+            raise ValueError(
+                "Google Cloud project ID not configured. "
+                "Set GOOGLE_CLOUD_PROJECT in your .env file."
             )
 
         # Create and return instance
-        logger.info(f"Creating Sarvam AI transcription service")
-        return SarvamAdapter()
+        logger.info(f"Creating Google Cloud Speech-to-Text V2 service")
+        return GoogleCloudSTTAdapter()
 
     @classmethod
     def _auto_select_provider(cls) -> str:
         """
-        Auto-select provider (always returns 'sarvam')
+        Auto-select provider (always returns 'google_cloud_stt_v2')
 
         Kept for backwards compatibility.
         """
-        return 'sarvam'
+        return 'google_cloud_stt_v2'
 
     @classmethod
     def get_available_providers(cls) -> List[str]:
@@ -231,29 +242,35 @@ class TranscriptionServiceFactory:
         Get list of available providers
 
         Returns:
-            List containing 'sarvam' if API key is configured
+            List containing 'google_cloud_stt_v2' if credentials are configured
         """
-        return ['sarvam'] if Config.SARVAM_API_KEY else []
+        return ['google_cloud_stt_v2'] if (Config.GOOGLE_APPLICATION_CREDENTIALS and Config.GOOGLE_CLOUD_PROJECT) else []
 
     @classmethod
     def get_provider_info(cls) -> Dict[str, Dict[str, Any]]:
         """
-        Get information about Sarvam AI provider
+        Get information about Google Cloud STT V2 provider
 
         Returns:
             Dictionary with provider details (cost, features, etc.)
         """
         return {
-            'sarvam': {
-                'name': 'Sarvam AI',
-                'cost_per_hour': 0.36,  # USD (Rs. 30)
+            'google_cloud_stt_v2': {
+                'name': 'Google Cloud Speech-to-Text V2',
+                'cost_per_hour': 1.62,  # USD ($0.18 base + $1.44 diarization)
+                'cost_breakdown': {
+                    'base_transcription': 0.18,
+                    'speaker_diarization': 1.44,
+                },
                 'currency': 'USD',
-                'languages': '10+ Indian languages',
-                'features': ['speaker_diarization', 'code_mixing', 'indian_accents'],
-                'best_for': 'Malayalam/English code-mixed speech, Indian accents',
-                'api_key_env': 'SARVAM_API_KEY',
-                'free_credits': '₹1,000 (~33 hours)',
-                'signup_url': 'https://www.sarvam.ai/',
-                'configured': bool(Config.SARVAM_API_KEY)
+                'languages': '125+ languages',
+                'features': ['speaker_diarization', 'automatic_punctuation', 'word_timestamps', 'word_confidence'],
+                'best_for': 'Enterprise-grade transcription, Malayalam/English, multi-speaker scenarios',
+                'credentials_env': 'GOOGLE_APPLICATION_CREDENTIALS',
+                'project_env': 'GOOGLE_CLOUD_PROJECT',
+                'free_credits': '$300 for 3 months (~185 hours with diarization)',
+                'free_tier': '60 min/month',
+                'signup_url': 'https://cloud.google.com/speech-to-text',
+                'configured': bool(Config.GOOGLE_APPLICATION_CREDENTIALS and Config.GOOGLE_CLOUD_PROJECT)
             }
         }
