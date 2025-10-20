@@ -139,16 +139,16 @@ class TranscriptionService(ABC):
 
 
 class GoogleCloudSTTAdapter(TranscriptionService):
-    """Adapter for Google Cloud Speech-to-Text V2 API"""
+    """Adapter for Google Cloud Speech-to-Text V1 API"""
 
     def __init__(self, credentials_path: Optional[str] = None, project_id: Optional[str] = None):
         super().__init__(api_key=None)  # Google uses service account, not API key
-        from services.google_stt_client import GoogleSTTClient
-        self.client = GoogleSTTClient(
+        from services.google_stt_v1_client import GoogleSTTV1Client
+        self.client = GoogleSTTV1Client(
             credentials_path=credentials_path or Config.GOOGLE_APPLICATION_CREDENTIALS,
             project_id=project_id or Config.GOOGLE_CLOUD_PROJECT
         )
-        self.provider_name = 'google_cloud_stt_v2'
+        self.provider_name = 'google_cloud_stt_v1'
 
     def transcribe_audio(
         self,

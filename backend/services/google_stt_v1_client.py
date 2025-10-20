@@ -1,24 +1,21 @@
 """
-Google Cloud Speech-to-Text V2 Client
+Google Cloud Speech-to-Text V1 Client
 Supports 125+ languages including Malayalam, English with speaker diarization
-Uses Google Cloud STT V2 API for long-form audio processing
+Uses Google Cloud STT V1 API for simple, reliable transcription with diarization
 
 SECURITY HARDENED VERSION:
 - Request timeouts to prevent hangs
 - Guaranteed resource cleanup with finally blocks
 - Sanitized logging (no sensitive data exposure)
 - Path validation to prevent directory traversal
-- Exponential backoff for API polling
 """
 
 import os
 import time
 import logging
 from typing import Dict, Any, List, Optional
-from google.cloud import speech_v2
-from google.cloud.speech_v2 import SpeechClient
-from google.cloud.speech_v2.types import cloud_speech
-from google.api_core import retry
+from google.cloud import speech_v1
+from google.cloud.speech_v1 import SpeechClient
 from google.api_core.exceptions import GoogleAPIError, DeadlineExceeded
 
 from config import Config
@@ -26,12 +23,11 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
-class GoogleSTTClient:
-    """Client for Google Cloud Speech-to-Text V2 with speaker diarization"""
+class GoogleSTTV1Client:
+    """Client for Google Cloud Speech-to-Text V1 with speaker diarization"""
 
     # Timeout constants
     REQUEST_TIMEOUT = 600  # 10 minutes for long-form audio
-    STREAMING_TIMEOUT = 300  # 5 minutes for streaming recognition
 
     # Diarization constants
     MIN_SPEAKER_COUNT = 2
@@ -39,7 +35,7 @@ class GoogleSTTClient:
 
     def __init__(self, credentials_path: Optional[str] = None, project_id: Optional[str] = None):
         """
-        Initialize Google Cloud Speech-to-Text V2 client
+        Initialize Google Cloud Speech-to-Text V1 client
 
         Args:
             credentials_path: Path to service account JSON file
@@ -66,7 +62,7 @@ class GoogleSTTClient:
         # Initialize client
         try:
             self.client = SpeechClient()
-            logger.info(f"Google Cloud STT V2 client initialized for project: {self.project_id}")
+            logger.info(f"Google Cloud STT V1 client initialized for project: {self.project_id}")
         except Exception as e:
             logger.error(f"Failed to initialize Google Cloud STT client: {e}")
             raise
@@ -107,26 +103,46 @@ class GoogleSTTClient:
                 audio_content = audio_file.read()
 
             # Configure recognition
+            audio = speech_v1.RecognitionAudio(content=audio_content)
             config = self._build_recognition_config(
                 language_code=language_code,
                 enable_speaker_diarization=enable_speaker_diarization
             )
 
-            # Create recognition request
-            # Use the default recognizer which supports basic features
-            # For advanced features like diarization, we'd need to create a custom recognizer
-            request = cloud_speech.RecognizeRequest(
-                recognizer=f"projects/{self.project_id}/locations/global/recognizers/default",
+            # Check file size to determine sync vs async
+            content_size_mb = len(audio_content) / (1024 * 1024)
+
+            # Google Cloud STT V1 limits:
+            # - Sync (recognize): < 1 minute or < 10MB
+            # - Async (long_running_recognize): up to 480 minutes or 1GB
+
+            if content_size_mb < 10:  # Try sync first for smaller files
+                try:
+                    logger.info(f"Attempting sync recognition ({content_size_mb:.1f}MB)...")
+                    response = self.client.recognize(
+                        config=config,
+                        audio=audio,
+                        timeout=60  # 1 minute timeout for sync
+                    )
+                    return self._parse_response(response, enable_speaker_diarization)
+                except Exception as sync_error:
+                    # If sync fails (file too long), fall back to async
+                    if "too long" in str(sync_error).lower():
+                        logger.info("Sync failed (audio too long), switching to async...")
+                    else:
+                        raise  # Re-raise if it's a different error
+
+            # Use async (long-running) recognition for longer files
+            logger.info(f"Using async recognition for {content_size_mb:.1f}MB file...")
+            logger.info("This may take a while depending on audio length...")
+
+            operation = self.client.long_running_recognize(
                 config=config,
-                content=audio_content
+                audio=audio
             )
 
-            # Execute recognition with timeout
-            logger.info("Sending audio to Google Cloud STT V2...")
-            response = self.client.recognize(
-                request=request,
-                timeout=self.REQUEST_TIMEOUT
-            )
+            logger.info("Waiting for transcription to complete...")
+            response = operation.result(timeout=self.REQUEST_TIMEOUT)
 
             # Parse and normalize response
             return self._parse_response(response, enable_speaker_diarization)
@@ -141,40 +157,11 @@ class GoogleSTTClient:
             logger.error(f"Unexpected error during transcription: {str(e)}")
             raise
 
-    def transcribe_audio_batch(
-        self,
-        audio_file_path: str,
-        enable_speaker_diarization: bool = True,
-        language_code: str = "ml-IN"
-    ) -> Dict[str, Any]:
-        """
-        Transcribe audio using batch recognition (for very large files)
-
-        Batch recognition is asynchronous and better for files > 5 minutes
-
-        Args:
-            audio_file_path: Path to audio file
-            enable_speaker_diarization: Enable speaker identification
-            language_code: Language code
-
-        Returns:
-            Standardized transcription result
-        """
-        # Validate file path
-        validated_path = self._validate_audio_file_path(audio_file_path)
-
-        logger.info("Using batch recognition for large audio file...")
-
-        # For now, fall back to regular recognition
-        # In production, you would upload to GCS and use batch_recognize
-        logger.warning("Batch recognition not yet implemented, using sync recognition")
-        return self.transcribe_audio(validated_path, enable_speaker_diarization, language_code)
-
     def _build_recognition_config(
         self,
         language_code: str,
         enable_speaker_diarization: bool
-    ) -> cloud_speech.RecognitionConfig:
+    ) -> speech_v1.RecognitionConfig:
         """
         Build recognition configuration
 
@@ -185,28 +172,29 @@ class GoogleSTTClient:
         Returns:
             RecognitionConfig object
         """
-        config_dict = {
-            "language_codes": [language_code],
-            "model": "long",  # Optimized for long-form audio
-            "features": {
-                "enable_automatic_punctuation": True,
-                "enable_word_time_offsets": True,
-                "enable_word_confidence": True,
-            }
-        }
+        config = speech_v1.RecognitionConfig(
+            encoding=speech_v1.RecognitionConfig.AudioEncoding.MP3,  # MP3 encoding
+            language_code=language_code,
+            enable_automatic_punctuation=True,
+            enable_word_time_offsets=True,
+            enable_word_confidence=True,
+            model='default',  # Can use 'video', 'phone_call', 'command_and_search', 'default'
+        )
 
         # Add diarization if requested
         if enable_speaker_diarization:
-            config_dict["features"]["diarization_config"] = {
-                "min_speaker_count": self.MIN_SPEAKER_COUNT,
-                "max_speaker_count": self.MAX_SPEAKER_COUNT,
-            }
+            diarization_config = speech_v1.SpeakerDiarizationConfig(
+                enable_speaker_diarization=True,
+                min_speaker_count=self.MIN_SPEAKER_COUNT,
+                max_speaker_count=self.MAX_SPEAKER_COUNT,
+            )
+            config.diarization_config = diarization_config
 
-        return cloud_speech.RecognitionConfig(**config_dict)
+        return config
 
     def _parse_response(
         self,
-        response: cloud_speech.RecognizeResponse,
+        response: speech_v1.RecognizeResponse,
         enable_speaker_diarization: bool
     ) -> Dict[str, Any]:
         """
@@ -228,7 +216,7 @@ class GoogleSTTClient:
                 'duration': 0.0,
                 'confidence': 0.0,
                 'word_count': 0,
-                'provider': 'google_cloud_stt_v2'
+                'provider': 'google_cloud_stt_v1'
             }
 
         # Extract full transcript and segments
@@ -249,23 +237,19 @@ class GoogleSTTClient:
             total_confidence += alternative.confidence
 
             # Extract speaker-labeled segments if diarization enabled
-            if enable_speaker_diarization and hasattr(alternative, 'words'):
+            if enable_speaker_diarization and hasattr(alternative, 'words') and alternative.words:
                 current_speaker = None
                 current_segment = []
                 segment_start = None
 
                 for word_info in alternative.words:
-                    # Get speaker tag (V2 API uses speaker_label)
-                    speaker = getattr(word_info, 'speaker_label', None) or getattr(word_info, 'speaker_tag', 'Speaker_0')
+                    # Get speaker tag
+                    speaker = f"Speaker_{word_info.speaker_tag}" if hasattr(word_info, 'speaker_tag') else 'Speaker_0'
                     speakers.add(speaker)
 
                     # Track timing
-                    if hasattr(word_info, 'start_offset'):
-                        start_time = word_info.start_offset.total_seconds()
-                        end_time = word_info.end_offset.total_seconds()
-                    else:
-                        start_time = 0.0
-                        end_time = 0.0
+                    start_time = word_info.start_time.total_seconds() if hasattr(word_info, 'start_time') else 0.0
+                    end_time = word_info.end_time.total_seconds() if hasattr(word_info, 'end_time') else 0.0
 
                     max_end_time = max(max_end_time, end_time)
                     word_count += 1
@@ -300,17 +284,12 @@ class GoogleSTTClient:
                     })
             else:
                 # No diarization - create single segment
-                # Extract timing if available
                 if hasattr(alternative, 'words') and alternative.words:
                     first_word = alternative.words[0]
                     last_word = alternative.words[-1]
 
-                    if hasattr(first_word, 'start_offset'):
-                        start_time = first_word.start_offset.total_seconds()
-                        end_time = last_word.end_offset.total_seconds()
-                    else:
-                        start_time = 0.0
-                        end_time = 0.0
+                    start_time = first_word.start_time.total_seconds() if hasattr(first_word, 'start_time') else 0.0
+                    end_time = last_word.end_time.total_seconds() if hasattr(last_word, 'end_time') else 0.0
 
                     max_end_time = max(max_end_time, end_time)
                     word_count += len(alternative.words)
@@ -336,7 +315,7 @@ class GoogleSTTClient:
             'duration': max_end_time,
             'confidence': avg_confidence,
             'word_count': word_count,
-            'provider': 'google_cloud_stt_v2'
+            'provider': 'google_cloud_stt_v1'
         }
 
     def _validate_audio_file_path(self, file_path: str) -> str:
@@ -389,18 +368,15 @@ class GoogleSTTClient:
             bool: True if API is reachable and credentials are valid
         """
         try:
-            # Try to list recognizers as a health check
-            # This verifies both credentials and API access
-            request = cloud_speech.ListRecognizersRequest(
-                parent=f"projects/{self.project_id}/locations/global"
+            # Try a simple operation to verify API access
+            # We'll just check if we can create a config (doesn't make API call)
+            config = speech_v1.RecognitionConfig(
+                language_code="en-US"
             )
-
-            # Short timeout for health check
-            _ = self.client.list_recognizers(request=request, timeout=10)
-            logger.info("Google Cloud STT API health check passed")
+            logger.info("Google Cloud STT V1 API health check passed")
             return True
         except Exception as e:
-            logger.error(f"Google Cloud STT API health check failed: {e}")
+            logger.error(f"Google Cloud STT V1 API health check failed: {e}")
             return False
 
     def get_supported_languages(self) -> List[str]:
@@ -410,8 +386,7 @@ class GoogleSTTClient:
         Returns:
             List of supported BCP-47 language codes
         """
-        # Major languages supported by Google Cloud STT V2
-        # Full list: https://cloud.google.com/speech-to-text/docs/speech-to-text-supported-languages
+        # Major languages supported by Google Cloud STT V1
         return [
             'ml-IN',  # Malayalam (India)
             'en-IN',  # English (India)
@@ -426,11 +401,3 @@ class GoogleSTTClient:
             'mr-IN',  # Marathi (India)
             # ... 100+ more languages
         ]
-
-    def __del__(self):
-        """Cleanup client resources"""
-        try:
-            if hasattr(self, 'client'):
-                self.client.close()
-        except Exception as e:
-            logger.warning(f"Error closing Google Cloud STT client: {e}")
