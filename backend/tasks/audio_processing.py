@@ -7,11 +7,9 @@ from celery_app import celery_app
 from config import Config
 from parsers.drt_parser import DRTParser
 from parsers.drt_writer import DRTWriter
-try:
-    from services.audio_analyzer import AudioAnalyzer
-except ImportError:
-    # Fallback to simple audio analyzer if librosa dependencies not available
-    from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
+# Always use SimpleAudioAnalyzer (scipy-based, Python 3.13 compatible)
+# AudioAnalyzer requires librosa which is not installed
+from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
 from services.edit_rules import EditRulesEngine
 from services.transcription_service import TranscriptionServiceFactory
 from services.filler_word_detector import FillerWordDetector
@@ -89,8 +87,9 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
                 meta={'progress': 30, 'message': 'Analyzing audio', 'job_id': job_id}
             )
 
-        # SECURITY: Use context manager for guaranteed cleanup
-        with AudioAnalyzer() as audio_analyzer:
+        # Create audio analyzer and ensure cleanup
+        audio_analyzer = AudioAnalyzer()
+        try:
             if not audio_analyzer.load_audio(audio_file_path):
                 raise ProcessingError("Failed to load audio file")
 
@@ -112,7 +111,12 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
                 'cut_points': audio_analyzer.find_optimal_cut_points(),
                 'features': audio_analyzer.analyze_audio_features()
             }
-        # Automatic cleanup of audio data and temp files
+        finally:
+            # Cleanup: release audio data if the analyzer supports it
+            if hasattr(audio_analyzer, 'release_audio_data'):
+                audio_analyzer.release_audio_data()
+            if hasattr(audio_analyzer, 'cleanup_all_orphaned_files'):
+                audio_analyzer.cleanup_all_orphaned_files()
 
         # Transcription (if enabled)
         transcription_data = None

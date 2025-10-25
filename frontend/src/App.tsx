@@ -50,7 +50,7 @@ function App() {
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
 
-    if (currentJob && (currentJob.status === 'processing' || currentJob.status === 'uploaded')) {
+    if (currentJob && (currentJob.status === 'processing' || currentJob.status === 'uploaded' || currentJob.status === 'queued')) {
       setIsPolling(true);
       intervalId = setInterval(async () => {
         try {

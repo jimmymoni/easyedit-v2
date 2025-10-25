@@ -179,7 +179,7 @@ def _validate_file_content(file_header: bytes, extension: str, filename: str):
         'aac': [b'\xff\xf1', b'\xff\xf9'],
         'flac': [b'fLaC'],
         'xml': [b'<?xml', b'<'],
-        'drt': [b'<?xml', b'<']
+        'drt': [b'<?xml', b'<', b'PK']  # DRT can be XML or ZIP archive
     }
 
     # Check if file content matches expected type
@@ -212,9 +212,11 @@ def _validate_file_content(file_header: bytes, extension: str, filename: str):
         raise ValidationError("File contains potentially malicious content")
 
     # Check for embedded executables (basic check)
-    executable_signatures = [b'MZ', b'PK', b'\x7fELF']
+    # IMPORTANT: Only check if file STARTS with executable signature, not if it contains it
+    # DRT files can be ZIP archives (start with PK), which is valid
+    executable_signatures = [b'MZ', b'\x7fELF']  # Removed b'PK' - handled separately
     for sig in executable_signatures:
-        if sig in file_header:
+        if file_header.startswith(sig):  # FIXED: Only check file start, not entire header
             raise ValidationError("File contains executable content")
 
 def validate_job_id(job_id: str) -> str:

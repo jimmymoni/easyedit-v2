@@ -1,5 +1,8 @@
 import defusedxml.ElementTree as ET
 import json
+import zipfile
+import os
+import tempfile
 from typing import Dict, Any, Optional
 from models.timeline import Timeline, Track, Clip
 import logging
@@ -15,13 +18,18 @@ class DRTParser:
         self.timeline = None
 
     def parse_file(self, file_path: str) -> Timeline:
-        """Parse a .drt file and return a Timeline object"""
+        """Parse a .drt file and return a Timeline object with automatic encoding detection and ZIP support"""
         try:
             if not file_path or not isinstance(file_path, str):
                 raise ValidationError("Invalid file path provided")
 
-            with open(file_path, 'r', encoding='utf-8') as file:
-                content = file.read()
+            # Check if file is a ZIP archive (DaVinci Resolve exports both XML and ZIP formats)
+            if self._is_zip_file(file_path):
+                logger.info("Detected ZIP-format DRT file, extracting project.xml")
+                content = self._extract_xml_from_zip(file_path)
+            else:
+                # Read file with automatic encoding detection
+                content = self._read_file_with_encoding_detection(file_path)
 
             if not content.strip():
                 raise ValidationError("DRT file is empty")
@@ -34,9 +42,6 @@ class DRTParser:
         except PermissionError:
             logger.error(f"Permission denied reading DRT file: {file_path}")
             raise ValidationError(f"Permission denied reading DRT file: {file_path}")
-        except UnicodeDecodeError as e:
-            logger.error(f"Invalid encoding in DRT file {file_path}: {str(e)}")
-            raise ValidationError(f"DRT file contains invalid encoding: {str(e)}")
         except (ValidationError, ProcessingError):
             # Re-raise our custom errors
             raise
@@ -44,19 +49,125 @@ class DRTParser:
             logger.exception(f"Unexpected error parsing .drt file {file_path}")
             raise ProcessingError(f"Failed to parse DRT file: {str(e)}")
 
+    def _read_file_with_encoding_detection(self, file_path: str) -> str:
+        """Read file with automatic encoding detection, trying multiple encodings"""
+        # List of encodings to try, in order of preference
+        encodings_to_try = ['utf-8', 'windows-1252', 'iso-8859-1', 'utf-16', 'cp1252', 'latin1']
+
+        last_error = None
+
+        for encoding in encodings_to_try:
+            try:
+                with open(file_path, 'r', encoding=encoding) as file:
+                    content = file.read()
+                    logger.info(f"Successfully read DRT file with {encoding} encoding")
+                    return content
+            except UnicodeDecodeError as e:
+                last_error = e
+                logger.debug(f"Failed to read with {encoding} encoding: {str(e)}")
+                continue
+            except Exception as e:
+                # Don't try other encodings for non-encoding errors
+                raise
+
+        # If all encodings failed, try reading with error handling (replace invalid chars)
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as file:
+                content = file.read()
+                logger.warning(f"Read DRT file with UTF-8 and character replacement (some characters may be corrupted)")
+                return content
+        except Exception as e:
+            logger.error(f"Failed to read DRT file with all encoding attempts: {str(e)}")
+            raise ValidationError(f"DRT file contains invalid encoding. Tried: {', '.join(encodings_to_try)}. Last error: {str(last_error)}")
+
+    def _is_zip_file(self, file_path: str) -> bool:
+        """Check if file is a ZIP archive by reading magic bytes"""
+        try:
+            with open(file_path, 'rb') as f:
+                magic_bytes = f.read(4)
+                # ZIP files start with PK\x03\x04 or PK\x05\x06 (empty archive)
+                return magic_bytes.startswith(b'PK\x03\x04') or magic_bytes.startswith(b'PK\x05\x06')
+        except Exception as e:
+            logger.warning(f"Could not check if file is ZIP: {str(e)}")
+            return False
+
+    def _extract_xml_from_zip(self, zip_path: str) -> str:
+        """Extract project.xml from DRT ZIP archive with security checks"""
+        try:
+            if not zipfile.is_zipfile(zip_path):
+                raise ValidationError("File appears to be ZIP but is not a valid ZIP archive")
+
+            with zipfile.ZipFile(zip_path, 'r') as zip_file:
+                # Security: Check for zip bombs (excessive compression)
+                total_uncompressed = sum(info.file_size for info in zip_file.infolist())
+                if total_uncompressed > 100 * 1024 * 1024:  # 100MB limit
+                    raise ValidationError("ZIP archive too large (potential zip bomb)")
+
+                # Look for project.xml in the archive
+                xml_files = [name for name in zip_file.namelist() if name.endswith('.xml')]
+
+                if not xml_files:
+                    raise ValidationError("No XML files found in DRT ZIP archive")
+
+                # Prefer 'project.xml', otherwise use first XML file
+                xml_filename = 'project.xml' if 'project.xml' in xml_files else xml_files[0]
+
+                # Security: Validate filename doesn't contain path traversal
+                if '..' in xml_filename or xml_filename.startswith('/'):
+                    raise ValidationError("Invalid filename in ZIP archive")
+
+                logger.info(f"Extracting {xml_filename} from DRT ZIP archive")
+
+                # Read XML content
+                with zip_file.open(xml_filename) as xml_file:
+                    xml_bytes = xml_file.read()
+
+                    # Try to decode with common encodings
+                    for encoding in ['utf-8', 'windows-1252', 'iso-8859-1']:
+                        try:
+                            xml_content = xml_bytes.decode(encoding)
+                            logger.info(f"Successfully decoded extracted XML with {encoding}")
+                            return xml_content
+                        except UnicodeDecodeError:
+                            continue
+
+                    # Fallback: decode with error replacement
+                    xml_content = xml_bytes.decode('utf-8', errors='replace')
+                    logger.warning("Decoded extracted XML with character replacement")
+                    return xml_content
+
+        except zipfile.BadZipFile as e:
+            logger.error(f"Invalid ZIP file: {str(e)}")
+            raise ValidationError(f"Invalid ZIP archive: {str(e)}")
+        except ValidationError:
+            # Re-raise our validation errors
+            raise
+        except Exception as e:
+            logger.exception(f"Error extracting XML from ZIP: {str(e)}")
+            raise ProcessingError(f"Failed to extract XML from ZIP archive: {str(e)}")
+
     def parse_content(self, xml_content: str) -> Timeline:
         """Parse .drt XML content and return a Timeline object"""
         try:
             if not xml_content or not isinstance(xml_content, str):
                 raise ValidationError("Invalid XML content provided")
 
+            # Remove BOM (Byte Order Mark) if present
+            if xml_content.startswith('\ufeff'):
+                xml_content = xml_content[1:]
+                logger.debug("Removed BOM from XML content")
+
+            # Strip whitespace
             xml_content = xml_content.strip()
             if not xml_content:
                 raise ValidationError("XML content is empty")
 
-            # Basic XML validation
+            # Basic XML validation - check for XML start
             if not xml_content.startswith('<'):
-                raise ValidationError("Content does not appear to be valid XML")
+                # Log first 100 characters to help debug
+                preview = xml_content[:100].replace('\n', '\\n').replace('\r', '\\r')
+                logger.error(f"Content does not start with '<'. First 100 chars: {preview}")
+                raise ValidationError(f"Content does not appear to be valid XML. Content starts with: {xml_content[:50]}")
 
             # Secure XML parsing with defusedxml (automatic XXE protection)
             root = ET.fromstring(xml_content)
