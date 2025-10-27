@@ -147,13 +147,25 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
 
       {/* Download Button */}
       {job.status === 'completed' && (
-        <div className="mt-4 pt-4 border-t border-border">
+        <div className="mt-4 pt-4 border-t border-border space-y-3">
           <button
             onClick={() => onDownload(job.job_id)}
             className="w-full flex items-center justify-center space-x-2 bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2.5 rounded-lg font-medium transition-colors"
           >
             <Download className="h-4 w-4" />
             <span>Download Edited Timeline (.drt)</span>
+          </button>
+
+          {/* Enter God Mode Button */}
+          <button
+            onClick={() => {
+              alert('God Mode coming soon! Job ID: ' + job.job_id);
+              // Will navigate to /godmode/:jobId in Phase 2
+            }}
+            className="w-full flex items-center justify-center space-x-2 bg-[#181818] border border-[#2A2A2A] text-[#EAEAEA] hover:bg-[#FF6B35] hover:text-white transition-all duration-300 px-4 py-2.5 rounded-lg font-medium"
+          >
+            <span className="text-lg">⚡</span>
+            <span>Enter God Mode</span>
           </button>
         </div>
       )}
