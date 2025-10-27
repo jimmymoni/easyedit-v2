@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from config import Config
 from parsers.drt_parser import DRTParser
 from parsers.drt_writer import DRTWriter
-from services.sarvam_client import SarvamClient
+from services.transcription_service import TranscriptionServiceFactory
 try:
     from services.audio_analyzer import AudioAnalyzer
 except ImportError:
@@ -46,15 +46,15 @@ app.config.from_object(Config)
 Config.init_app(app)
 
 # Enable CORS for frontend integration
-CORS(app, origins=["http://localhost:3000", "http://localhost:5173"])
+CORS(app, origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:5173"])
 
 # Setup production features
 setup_error_handlers(app)
 setup_monitoring(app)
 RequestLogger(app)
 
-# Initialize WebSocket support
-websocket_manager.init_app(app)
+# NOTE: WebSocket initialization moved to AFTER route definitions
+# to ensure SocketIO wrapper includes all routes
 
 # Initialize authentication and rate limiting
 jwt_manager.init_app(app)
@@ -834,12 +834,21 @@ def internal_error(error):
     logger.error(f"Internal server error: {str(error)}")
     return jsonify({"error": "Internal server error"}), 500
 
+# Initialize WebSocket support AFTER all routes are defined
+# This ensures the SocketIO wrapper includes all Flask routes
+# TEMPORARILY DISABLED FOR DEBUGGING
+# websocket_manager.init_app(app)
+
 if __name__ == "__main__":
     # Run startup tasks
     startup()
 
-    # Use SocketIO server for WebSocket support
-    if websocket_manager.socketio:
-        websocket_manager.socketio.run(app, debug=True, host='0.0.0.0', port=5000)
-    else:
-        app.run(debug=True, host='0.0.0.0', port=5000)
+    # DEBUG: Print all registered routes
+    print("\n" + "="*60)
+    print("REGISTERED ROUTES:")
+    for rule in app.url_map.iter_rules():
+        print(f"  {rule.endpoint}: {rule.rule} -> {rule.methods}")
+    print("="*60 + "\n")
+
+    # Start the server - NO SocketIO for debugging
+    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)

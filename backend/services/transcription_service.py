@@ -177,55 +177,128 @@ class GoogleCloudSTTAdapter(TranscriptionService):
         return self.client.check_api_status()
 
 
+class ReplicateWhisperAdapter(TranscriptionService):
+    """Adapter for Replicate Whisper with Speaker Diarization (PRIMARY)"""
+
+    def __init__(self, api_token: Optional[str] = None):
+        super().__init__(api_key=api_token)
+        from services.replicate_whisper_client import ReplicateWhisperClient
+        self.client = ReplicateWhisperClient(api_token=api_token or Config.REPLICATE_API_TOKEN)
+        self.provider_name = 'replicate_whisper'
+
+    def transcribe_audio(
+        self,
+        audio_file_path: str,
+        enable_speaker_diarization: bool = True,
+        language_code: str = None
+    ) -> Dict[str, Any]:
+        """Transcribe using Replicate Whisper and normalize response"""
+        # Default to English for simplicity (Whisper can auto-detect)
+        lang = language_code or 'en'
+
+        # Replicate client returns already normalized format
+        result = self.client.transcribe_audio(
+            audio_file_path=audio_file_path,
+            enable_speaker_diarization=enable_speaker_diarization,
+            language=lang
+        )
+
+        return result
+
+    def check_api_status(self) -> bool:
+        """Check Replicate API accessibility"""
+        return self.client.check_api_status()
+
+
 class TranscriptionServiceFactory:
     """
     Factory for creating transcription service instances
 
-    Currently supports Google Cloud Speech-to-Text V2 for Malayalam/English transcription.
-    Architecture allows easy addition of more providers in the future.
+    Primary: Replicate Whisper (cost-effective, 95% cheaper than Google Cloud)
+    Backup: Google Cloud Speech-to-Text V1 (enterprise-grade reliability)
+
+    Architecture allows easy switching between providers or adding new ones.
     """
 
     PROVIDERS = {
+        # Primary: Replicate Whisper (recommended)
+        'replicate': ReplicateWhisperAdapter,
+        'replicate_whisper': ReplicateWhisperAdapter,
+        'whisper': ReplicateWhisperAdapter,
+
+        # Backup: Google Cloud STT
         'google': GoogleCloudSTTAdapter,
         'google_cloud': GoogleCloudSTTAdapter,
-        'google_cloud_stt_v2': GoogleCloudSTTAdapter,
+        'google_cloud_stt_v1': GoogleCloudSTTAdapter,
     }
 
     @classmethod
     def create(cls, provider: Optional[str] = None) -> TranscriptionService:
         """
-        Create a Google Cloud STT V2 transcription service instance
+        Create a transcription service instance
 
         Args:
-            provider: Provider name ('google', 'google_cloud', 'google_cloud_stt_v2')
-                     For backwards compatibility, accepts 'auto' which uses Google Cloud
+            provider: Provider name ('replicate', 'whisper', 'google', etc.)
+                     If None or 'auto', uses Replicate Whisper (primary)
 
         Returns:
-            GoogleCloudSTTAdapter instance
+            TranscriptionService instance (ReplicateWhisperAdapter or GoogleCloudSTTAdapter)
 
         Raises:
-            ValueError: If GOOGLE_APPLICATION_CREDENTIALS not configured
+            ValueError: If required credentials not configured
         """
-        # Always use Google Cloud (ignore provider parameter for simplicity)
-        selected_provider = 'google_cloud_stt_v2'
+        # Default to Replicate Whisper
+        selected_provider = provider or 'replicate_whisper'
 
-        # Check if credentials are available
-        if not Config.GOOGLE_APPLICATION_CREDENTIALS:
+        # Handle 'auto' for backwards compatibility
+        if selected_provider == 'auto':
+            selected_provider = 'replicate_whisper'
+
+        # Validate provider
+        if selected_provider not in cls.PROVIDERS:
+            available = ', '.join(cls.PROVIDERS.keys())
             raise ValueError(
-                "Google Cloud credentials not configured. "
-                "Set GOOGLE_APPLICATION_CREDENTIALS in your .env file to enable transcription.\n"
-                "Get started with $300 free credits at https://cloud.google.com/speech-to-text"
+                f"Unknown provider: {selected_provider}. "
+                f"Available providers: {available}"
             )
 
-        if not Config.GOOGLE_CLOUD_PROJECT:
-            raise ValueError(
-                "Google Cloud project ID not configured. "
-                "Set GOOGLE_CLOUD_PROJECT in your .env file."
-            )
+        # Get adapter class
+        adapter_class = cls.PROVIDERS[selected_provider]
 
-        # Create and return instance
-        logger.info(f"Creating Google Cloud Speech-to-Text V2 service")
-        return GoogleCloudSTTAdapter()
+        # Check credentials based on provider
+        if adapter_class == ReplicateWhisperAdapter:
+            # Check Replicate API token
+            if not Config.REPLICATE_API_TOKEN:
+                raise ValueError(
+                    "Replicate API token not configured. "
+                    "Set REPLICATE_API_TOKEN in your .env file to enable transcription.\n"
+                    "Get your token at: https://replicate.com/account\n"
+                    "Cost: ~$0.078 per hour of audio (95% cheaper than Google Cloud)"
+                )
+
+            logger.info(f"Creating Replicate Whisper service (primary provider)")
+            return ReplicateWhisperAdapter()
+
+        elif adapter_class == GoogleCloudSTTAdapter:
+            # Check Google Cloud credentials
+            if not Config.GOOGLE_APPLICATION_CREDENTIALS:
+                raise ValueError(
+                    "Google Cloud credentials not configured. "
+                    "Set GOOGLE_APPLICATION_CREDENTIALS in your .env file to enable transcription.\n"
+                    "Get started with $300 free credits at https://cloud.google.com/speech-to-text"
+                )
+
+            if not Config.GOOGLE_CLOUD_PROJECT:
+                raise ValueError(
+                    "Google Cloud project ID not configured. "
+                    "Set GOOGLE_CLOUD_PROJECT in your .env file."
+                )
+
+            logger.info(f"Creating Google Cloud Speech-to-Text V1 service (backup provider)")
+            return GoogleCloudSTTAdapter()
+
+        else:
+            raise ValueError(f"Unsupported adapter class: {adapter_class}")
 
     @classmethod
     def _auto_select_provider(cls) -> str:

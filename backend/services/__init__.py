@@ -1,4 +1,5 @@
-from .google_stt_v1_client import GoogleSTTV1Client
+from .replicate_whisper_client import ReplicateWhisperClient  # Primary transcription provider
+from .google_stt_v1_client import GoogleSTTV1Client  # Backup transcription provider
 try:
     from .audio_analyzer import AudioAnalyzer
 except ImportError:
@@ -9,4 +10,4 @@ from .timeline_editor import TimelineEditingEngine
 from .openai_client import OpenAIClient
 from .ai_enhancer import AIEnhancementService
 
-__all__ = ['GoogleSTTV1Client', 'AudioAnalyzer', 'EditRulesEngine', 'TimelineEditingEngine', 'OpenAIClient', 'AIEnhancementService']
+__all__ = ['ReplicateWhisperClient', 'GoogleSTTV1Client', 'AudioAnalyzer', 'EditRulesEngine', 'TimelineEditingEngine', 'OpenAIClient', 'AIEnhancementService']

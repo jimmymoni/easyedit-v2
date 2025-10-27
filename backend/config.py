@@ -6,10 +6,15 @@ load_dotenv()
 
 class Config:
     # API Keys
-    # Google Cloud Speech-to-Text V2 for transcription + speaker diarization
+    # Replicate Whisper - PRIMARY transcription provider (95% cheaper than Google Cloud)
+    REPLICATE_API_TOKEN = os.getenv('REPLICATE_API_TOKEN')  # Get from https://replicate.com/account
+
+    # Google Cloud Speech-to-Text V1 - BACKUP transcription provider
     GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')  # Path to service account JSON
     GOOGLE_CLOUD_PROJECT = os.getenv('GOOGLE_CLOUD_PROJECT')  # GCP project ID
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # OpenAI for AI enhancements
+
+    # OpenAI for AI enhancements (transcript improvement, highlights, summaries)
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
     # Flask Configuration
     SECRET_KEY = os.getenv('SECRET_KEY') or secrets.token_hex(32)

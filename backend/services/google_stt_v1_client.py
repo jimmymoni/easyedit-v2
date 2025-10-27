@@ -1,7 +1,14 @@
 """
-Google Cloud Speech-to-Text V1 Client
+Google Cloud Speech-to-Text V1 Client - BACKUP TRANSCRIPTION PROVIDER
+
+⚠️ NOTE: This is a BACKUP provider. Primary transcription uses Replicate Whisper (95% cheaper).
+Use this only if Replicate is unavailable or you need specific Google Cloud features.
+
 Supports 125+ languages including Malayalam, English with speaker diarization
-Uses Google Cloud STT V1 API for simple, reliable transcription with diarization
+Uses Google Cloud STT V1 API for enterprise-grade reliability
+
+Cost: $1.62/hour ($0.18 base + $1.44 diarization)
+Primary Alternative: Replicate Whisper @ $0.078/hour (95% savings)
 
 SECURITY HARDENED VERSION:
 - Request timeouts to prevent hangs

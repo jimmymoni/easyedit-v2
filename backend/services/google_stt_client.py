@@ -1,7 +1,14 @@
 """
-Google Cloud Speech-to-Text V2 Client
-Supports 125+ languages including Malayalam, English with speaker diarization
-Uses Google Cloud STT V2 API for long-form audio processing
+Google Cloud Speech-to-Text V2 Client - BACKUP TRANSCRIPTION PROVIDER (DEPRECATED)
+
+⚠️ NOTE: This V2 client is DEPRECATED. Use google_stt_v1_client.py instead (better results).
+Primary transcription uses Replicate Whisper (95% cheaper, better accuracy).
+
+This file is kept for reference only. V2 API had poor accuracy compared to V1.
+Use V1 API (google_stt_v1_client.py) if you need Google Cloud transcription.
+
+Cost: $1.62/hour ($0.18 base + $1.44 diarization)
+Primary Alternative: Replicate Whisper @ $0.078/hour (95% savings)
 
 SECURITY HARDENED VERSION:
 - Request timeouts to prevent hangs

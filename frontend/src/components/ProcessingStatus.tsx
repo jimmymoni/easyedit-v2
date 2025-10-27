@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ProcessingJob, ProcessingStats } from '../types';
 import { CheckCircle, AlertCircle, Clock, Download, BarChart3 } from 'lucide-react';
 import ProcessingTimer from './ProcessingTimer';
@@ -9,6 +10,8 @@ interface ProcessingStatusProps {
 }
 
 const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) => {
+  const navigate = useNavigate();
+
   const getStatusIcon = () => {
     switch (job.status) {
       case 'completed':
@@ -158,10 +161,7 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
 
           {/* Enter God Mode Button */}
           <button
-            onClick={() => {
-              alert('God Mode coming soon! Job ID: ' + job.job_id);
-              // Will navigate to /godmode/:jobId in Phase 2
-            }}
+            onClick={() => navigate(`/godmode/${job.job_id}`)}
             className="w-full flex items-center justify-center space-x-2 bg-[#181818] border border-[#2A2A2A] text-[#EAEAEA] hover:bg-[#FF6B35] hover:text-white transition-all duration-300 px-4 py-2.5 rounded-lg font-medium"
           >
             <span className="text-lg">⚡</span>
