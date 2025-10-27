@@ -620,6 +620,118 @@ def download_result(job_id):
         logger.error(f"Error downloading file for job {job_id}: {str(e)}")
         return jsonify({"error": "Download failed"}), 500
 
+@app.route('/audio/<job_id>', methods=['GET'])
+@require_auth()
+@require_rate_limit("20 per minute, 200 per hour")
+@error_handler
+def get_audio_file(job_id):
+    """Get uploaded audio file for God Mode waveform viewer"""
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        # Get job from job_manager or fallback to processing_jobs
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        # Get audio file path
+        audio_file = job_status.get("audio_file")
+
+        if not audio_file or not os.path.exists(audio_file):
+            return jsonify({"error": "Audio file not found"}), 404
+
+        # Determine mimetype based on extension
+        _, ext = os.path.splitext(audio_file)
+        mime_types = {
+            '.wav': 'audio/wav',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.aac': 'audio/aac',
+            '.flac': 'audio/flac'
+        }
+        mimetype = mime_types.get(ext.lower(), 'application/octet-stream')
+
+        return send_file(
+            audio_file,
+            mimetype=mimetype,
+            as_attachment=False  # Allow inline playback
+        )
+
+    except Exception as e:
+        logger.error(f"Error serving audio file for job {job_id}: {str(e)}")
+        return jsonify({"error": "Failed to serve audio file"}), 500
+
+@app.route('/ai-edit', methods=['POST'])
+@require_auth()
+@require_rate_limit("10 per minute, 100 per hour")
+@error_handler
+def ai_edit_timeline():
+    """AI-powered timeline editing via natural language prompts"""
+    try:
+        # Validate request
+        data = validate_json_request(request)
+        job_id = validate_job_id(data.get('job_id'))
+        prompt = data.get('prompt', '').strip()
+
+        if not prompt:
+            return jsonify({"error": "Prompt is required"}), 400
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        if job_status.get("status") != "completed":
+            return jsonify({"error": "Job must be completed before AI editing"}), 400
+
+        # Get timeline data (would load from processed result)
+        from parsers.drt_parser import DRTParser
+        from services.ai_editor import AITimelineEditor
+
+        drt_file = job_status.get("drt_file")
+        if not drt_file or not os.path.exists(drt_file):
+            return jsonify({"error": "Timeline file not found"}), 404
+
+        # Parse timeline
+        parser = DRTParser()
+        timeline = parser.parse_file(drt_file)
+
+        # Process with AI editor
+        editor = AITimelineEditor()
+        result = editor.process_prompt(prompt, timeline, transcription_data=None)
+
+        logger.info(f"AI edit completed for job {job_id}: {result.get('message')}")
+
+        return jsonify({
+            "job_id": job_id,
+            "success": result.get('success', True),
+            "operation": result.get('operation', 'unknown'),
+            "message": result.get('message', 'Edit completed'),
+            "changes_made": result.get('changes_made', {}),
+            "prompt": prompt
+        })
+
+    except Exception as e:
+        logger.error(f"Error processing AI edit: {str(e)}")
+        return jsonify({"error": f"AI edit failed: {str(e)}"}), 500
+
 @app.route('/transcription/<job_id>', methods=['GET'])
 def get_transcription(job_id):
     """Get transcription data for a job"""

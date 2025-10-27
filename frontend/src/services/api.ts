@@ -214,3 +214,12 @@ export const triggerCleanup = async (): Promise<{ message: string }> => {
   const response = await api.post<{ message: string }>('/cleanup');
   return response.data;
 };
+
+// God Mode - AI Edit API
+export const submitAIEdit = async (jobId: string, prompt: string): Promise<any> => {
+  const response = await api.post('/ai-edit', {
+    job_id: jobId,
+    prompt: prompt,
+  });
+  return response.data;
+};

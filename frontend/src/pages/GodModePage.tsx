@@ -1,10 +1,62 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Zap } from 'lucide-react';
+import WaveformViewer from '../components/godmode/WaveformViewer';
+import PromptInput from '../components/godmode/PromptInput';
+import TimelineControls from '../components/godmode/TimelineControls';
+import * as api from '../services/api';
 
 const GodModePage: React.FC = () => {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
+  const [audioUrl] = useState(`http://localhost:5000/audio/${jobId}`);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [editMessage, setEditMessage] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const handlePromptSubmit = async (prompt: string) => {
+    if (!jobId) return;
+
+    setIsProcessing(true);
+    setEditMessage(null);
+    setEditError(null);
+
+    try {
+      const result = await api.submitAIEdit(jobId, prompt);
+      setEditMessage(result.message || 'Edit completed successfully!');
+      console.log('AI Edit result:', result);
+    } catch (error: any) {
+      console.error('AI Edit failed:', error);
+      setEditError(error?.response?.data?.error || 'AI edit failed. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!jobId) return;
+
+    setIsExporting(true);
+    try {
+      // Download the existing processed DRT file
+      const blob = await api.downloadResult(jobId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = `godmode_timeline_${jobId.slice(-8)}.drt`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('Export failed. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -35,28 +87,27 @@ const GodModePage: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="bg-[#181818] border border-[#2A2A2A] rounded-xl shadow-lg p-12 text-center">
-          <div className="mb-6">
-            <span className="text-6xl">⚡</span>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        {/* Waveform Visualization */}
+        {jobId && <WaveformViewer jobId={jobId} audioUrl={audioUrl} />}
+
+        {/* Edit Result Messages */}
+        {editMessage && (
+          <div className="bg-[#181818] border border-[#FF6B35] rounded-xl p-4">
+            <p className="text-[#FF6B35] font-medium">✓ {editMessage}</p>
           </div>
-          <h2 className="text-3xl font-bold text-[#EAEAEA] mb-4">
-            God Mode - Coming Soon
-          </h2>
-          <p className="text-[#EAEAEA]/70 mb-2">
-            Job ID: <span className="font-mono text-[#FF6B35]">{jobId}</span>
-          </p>
-          <p className="text-[#EAEAEA]/70 mb-8 max-w-2xl mx-auto">
-            This powerful AI-driven timeline editor will let you make intelligent edits
-            through natural language prompts. Stay tuned!
-          </p>
-          <button
-            onClick={() => navigate('/')}
-            className="bg-[#FF6B35] hover:bg-[#FF6B35]/90 text-white px-6 py-3 rounded-lg font-medium transition-colors"
-          >
-            Back to Main Page
-          </button>
-        </div>
+        )}
+        {editError && (
+          <div className="bg-[#181818] border border-red-400 rounded-xl p-4">
+            <p className="text-red-400 font-medium">✗ {editError}</p>
+          </div>
+        )}
+
+        {/* AI Prompt Input */}
+        <PromptInput onSubmit={handlePromptSubmit} isProcessing={isProcessing} />
+
+        {/* Timeline Controls */}
+        <TimelineControls onExport={handleExport} isExporting={isExporting} />
 
         {/* Feature Preview */}
         <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">

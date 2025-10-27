@@ -66,3 +66,18 @@ export interface TimelineInsights {
     speaker_changes: number;
   };
 }
+
+// God Mode - AI Edit Types
+export interface AIEditRequest {
+  job_id: string;
+  prompt: string;
+}
+
+export interface AIEditResponse {
+  job_id: string;
+  success: boolean;
+  operation: string;
+  message: string;
+  changes_made: Record<string, any>;
+  prompt: string;
+}
