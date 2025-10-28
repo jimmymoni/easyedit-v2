@@ -738,16 +738,48 @@ def get_transcription(job_id):
     # Validate job ID
     job_id = validate_job_id(job_id)
 
-    if job_id not in processing_jobs:
+    # Get job data from job manager (handles both memory and file storage)
+    job = job_manager.get_job_status(job_id)
+
+    if not job:
         return jsonify({"error": "Job not found"}), 404
 
-    job = processing_jobs[job_id]
-
-    if not job.get("transcription_available"):
+    # Check if transcription is available in the result
+    result = job.get("result", {})
+    if not result.get("transcription_available"):
         return jsonify({"error": "No transcription available for this job"}), 404
 
-    # This would need to be stored separately in a real implementation
-    return jsonify({"message": "Transcription data would be returned here"})
+    # Return transcription data from result
+    transcription_data = result.get("transcription")
+    if not transcription_data:
+        return jsonify({"error": "Transcription data not found"}), 404
+
+    # Transform segments to frontend-expected format
+    # Frontend expects: {timestamp, speaker, text, confidence}
+    # Backend provides: {start, end, speaker, text, confidence, words}
+    segments = transcription_data.get('segments', [])
+    transformed_segments = []
+
+    for seg in segments:
+        transformed_segments.append({
+            'timestamp': seg.get('start', 0),  # Use 'start' time as timestamp
+            'speaker': seg.get('speaker', 'UNKNOWN'),
+            'text': seg.get('text', ''),
+            'confidence': seg.get('confidence', 0.85)
+        })
+
+    # Return transformed data with metadata
+    return jsonify({
+        "transcription": transformed_segments,
+        "job_id": job_id,
+        "metadata": {
+            "duration": transcription_data.get('duration', 0),
+            "word_count": transcription_data.get('word_count', 0),
+            "num_speakers": transcription_data.get('num_speakers', 0),
+            "provider": transcription_data.get('provider', 'unknown'),
+            "confidence": transcription_data.get('confidence', 0.85)
+        }
+    })
 
 @app.route('/ai-enhancements/<job_id>', methods=['GET'])
 def get_ai_enhancements(job_id):
