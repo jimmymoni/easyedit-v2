@@ -8,9 +8,9 @@ Integrates with thomasmol/whisper-diarization model on Replicate for:
 - Cost-effective: ~$0.032-0.078 per transcription (95% cheaper than Google Cloud)
 
 Cost Model:
-- GPU: Nvidia T4 @ $0.000725/second
-- Processing: ~44 seconds typical (30x-50x realtime)
-- Example: 60 min audio = 108s processing = $0.078
+- Typical cost: ~$0.043 per run (per Replicate pricing)
+- Processing: ~30x-50x realtime (very fast)
+- Example: 60 min audio processed in ~60-120 seconds
 
 Security Features:
 - Path validation and symlink rejection
@@ -23,7 +23,7 @@ import os
 import time
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 import replicate
 
 logger = logging.getLogger(__name__)
@@ -40,11 +40,12 @@ class ReplicateWhisperClient:
     - English-first with auto language detection
     """
 
-    # Model identifier on Replicate
-    MODEL_ID = "thomasmol/whisper-diarization"
+    # Model identifier on Replicate (with version hash for stability)
+    # Version: 1495a9cd... released Feb 19, 2025
+    MODEL_ID = "thomasmol/whisper-diarization:1495a9cddc83b2203b0d8d3516e38b80fd1572ebc4bc5700ac1da56a9b3ed886"
 
-    # Pricing (Nvidia T4 GPU)
-    GPU_COST_PER_SECOND = 0.000725
+    # Pricing (per Replicate docs)
+    TYPICAL_COST_PER_RUN = 0.043  # USD per transcription run
 
     # Timeouts
     API_TIMEOUT_SECONDS = 600  # 10 minutes max
@@ -75,8 +76,7 @@ class ReplicateWhisperClient:
         enable_speaker_diarization: bool = True,
         language: str = 'en',
         num_speakers: Optional[int] = None,
-        min_speakers: Optional[int] = None,
-        max_speakers: Optional[int] = None
+        prompt: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Transcribe audio file with optional speaker diarization
@@ -85,9 +85,8 @@ class ReplicateWhisperClient:
             audio_file_path: Path to audio file (WAV, MP3, M4A, etc.)
             enable_speaker_diarization: Enable speaker identification (default: True)
             language: Language code ('en' for English, None for auto-detect)
-            num_speakers: Exact number of speakers (optional)
-            min_speakers: Minimum number of speakers (optional)
-            max_speakers: Maximum number of speakers (optional)
+            num_speakers: Exact number of speakers (optional, improves accuracy if known)
+            prompt: Vocabulary prompt with names/terms/foreign words (optional, improves accuracy)
 
         Returns:
             {
@@ -109,39 +108,50 @@ class ReplicateWhisperClient:
         logger.info(f"Starting Whisper transcription for: {audio_path}")
         logger.info(f"Speaker diarization: {enable_speaker_diarization}")
 
+        # Prepare audio for upload (compress if needed)
+        upload_path, temp_compressed_path = self._prepare_audio_for_upload(audio_path)
+
         try:
             start_time = time.time()
 
-            # Prepare input parameters
+            # Prepare input parameters using correct parameter names
+            # Per Replicate docs: use file_string (base64), file_url, or file (path)
             input_params = {
-                "file": open(audio_path, "rb"),
-                "language": language if language else None,
-                "batch_size": 64,  # Optimize for speed
+                "file": open(upload_path, "rb"),  # Pass file handle (Replicate SDK handles this)
             }
+
+            # Add language if specified (don't send None, omit instead)
+            if language:
+                input_params["language"] = language
 
             # Add speaker diarization params if enabled
             if enable_speaker_diarization:
                 if num_speakers:
                     input_params["num_speakers"] = num_speakers
-                if min_speakers:
-                    input_params["min_speakers"] = min_speakers
-                if max_speakers:
-                    input_params["max_speakers"] = max_speakers
 
-            # Run transcription on Replicate
-            logger.info(f"Calling Replicate API: {self.MODEL_ID}")
+            # Add vocabulary prompt if provided (improves accuracy for names/technical terms)
+            if prompt:
+                input_params["prompt"] = prompt
+
+            # Run transcription using replicate.run() (recommended API method in SDK v0.25+)
+            # Note: replicate.run() automatically uses latest model version
+            logger.info(f"Running Replicate model: {self.MODEL_ID}")
+            logger.info(f"Input parameters: {list(input_params.keys())}")
+
             output = replicate.run(
                 self.MODEL_ID,
                 input=input_params
             )
 
+            logger.info(f"Transcription completed successfully")
+
             end_time = time.time()
             processing_time = end_time - start_time
 
-            # Calculate cost
-            estimated_cost = processing_time * self.GPU_COST_PER_SECOND
+            # Use typical cost estimate (Replicate charges per run, not per second)
+            estimated_cost = self.TYPICAL_COST_PER_RUN
 
-            logger.info(f"Transcription completed in {processing_time:.1f}s (cost: ${estimated_cost:.4f})")
+            logger.info(f"Transcription completed in {processing_time:.1f}s (estimated cost: ${estimated_cost:.3f})")
 
             # Parse and standardize output
             result = self._parse_whisper_output(output, processing_time, estimated_cost)
@@ -151,6 +161,15 @@ class ReplicateWhisperClient:
         except Exception as e:
             logger.error(f"Replicate Whisper transcription failed: {str(e)}")
             raise RuntimeError(f"Transcription failed: {str(e)}")
+
+        finally:
+            # CRITICAL: Clean up compressed file if it was created
+            if temp_compressed_path and os.path.exists(temp_compressed_path):
+                try:
+                    os.remove(temp_compressed_path)
+                    logger.info(f"Cleaned up temporary compressed file: {temp_compressed_path}")
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to clean up compressed file {temp_compressed_path}: {cleanup_err}")
 
     def _validate_audio_path(self, audio_file_path: str) -> str:
         """
@@ -185,6 +204,109 @@ class ReplicateWhisperClient:
 
         logger.debug(f"Validated audio path: {abs_path}")
         return abs_path
+
+    def _prepare_audio_for_upload(self, audio_path: str) -> Tuple[str, Optional[str]]:
+        """
+        Prepare audio file for Replicate upload with automatic compression for large files
+
+        Args:
+            audio_path: Path to audio file
+
+        Returns:
+            Tuple of (upload_path: str, temp_compressed_path: Optional[str])
+            - upload_path: Path to file that should be uploaded
+            - temp_compressed_path: Path to temp MP3 if compression was used (needs cleanup)
+
+        Raises:
+            RuntimeError: If compression fails
+        """
+        from config import Config
+
+        # Check file size
+        file_size_bytes = os.path.getsize(audio_path)
+        file_size_mb = file_size_bytes / (1024 * 1024)
+
+        # If file is small enough, use it directly
+        max_size_mb = Config.REPLICATE_MAX_FILE_SIZE_MB
+        if file_size_mb <= max_size_mb:
+            logger.info(f"File size {file_size_mb:.1f}MB is within limit ({max_size_mb}MB), uploading directly")
+            return audio_path, None
+
+        # File is too large - compress to MP3
+        logger.warning(
+            f"File size {file_size_mb:.1f}MB exceeds Replicate limit ({max_size_mb}MB). "
+            f"Compressing to MP3 before upload..."
+        )
+
+        try:
+            # Convert to MP3 with moderate quality (128kbps is fine for transcription)
+            # MP3 will be saved in temp folder with .compressed.mp3 suffix
+            input_path = Path(audio_path)
+            output_filename = f"{input_path.stem}.compressed.mp3"
+            output_path = os.path.join(Config.TEMP_FOLDER, output_filename)
+
+            # Use ffmpeg directly to compress to MP3 (avoids pydub audioop issue in Python 3.13)
+            import subprocess
+            import shutil
+
+            # Check if ffmpeg is available
+            ffmpeg_path = shutil.which('ffmpeg')
+            if not ffmpeg_path:
+                raise RuntimeError(
+                    "ffmpeg not found. Please install ffmpeg to compress large audio files.\n"
+                    "Installation instructions: https://ffmpeg.org/download.html\n"
+                    "  - Windows: Download from https://www.gyan.dev/ffmpeg/builds/ and add to PATH\n"
+                    "  - macOS: brew install ffmpeg\n"
+                    "  - Linux: sudo apt-get install ffmpeg"
+                )
+
+            logger.info(f"Compressing to MP3 (128kbps) using ffmpeg: {audio_path} -> {output_path}")
+
+            # FFmpeg command: convert to MP3 with 128kbps bitrate
+            ffmpeg_cmd = [
+                ffmpeg_path,
+                '-i', audio_path,  # Input file
+                '-vn',  # No video
+                '-ar', '44100',  # Sample rate 44.1kHz
+                '-ac', '2',  # Stereo
+                '-b:a', '128k',  # Bitrate 128kbps
+                '-y',  # Overwrite output file
+                output_path
+            ]
+
+            result = subprocess.run(
+                ffmpeg_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout
+                shell=False  # SECURITY: Never use shell=True
+            )
+
+            if result.returncode != 0:
+                raise RuntimeError(f"FFmpeg conversion failed: {result.stderr}")
+
+            compressed_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            compression_ratio = (1 - compressed_size_mb / file_size_mb) * 100
+
+            logger.info(
+                f"Compression complete: {file_size_mb:.1f}MB → {compressed_size_mb:.1f}MB "
+                f"({compression_ratio:.1f}% reduction)"
+            )
+
+            if compressed_size_mb > max_size_mb:
+                # Still too large even after compression
+                logger.error(f"Compressed file still exceeds limit: {compressed_size_mb:.1f}MB > {max_size_mb}MB")
+                os.remove(output_path)
+                raise RuntimeError(
+                    f"Audio file is too large even after MP3 compression "
+                    f"({compressed_size_mb:.1f}MB > {max_size_mb}MB limit)"
+                )
+
+            return output_path, output_path  # Return MP3 path and mark it for cleanup
+
+        except Exception as e:
+            logger.error(f"Failed to compress audio for upload: {str(e)}")
+            raise RuntimeError(f"Audio compression failed: {str(e)}")
 
     def _parse_whisper_output(
         self,
@@ -299,10 +421,10 @@ class ReplicateWhisperClient:
                 'realtime_factor': '0.02-0.05x (20-50x faster than realtime)'
             },
             'pricing': {
-                'gpu_type': 'Nvidia T4',
-                'cost_per_second': self.GPU_COST_PER_SECOND,
-                'typical_cost_per_hour_audio': 0.078,  # ~108s processing
-                'currency': 'USD'
+                'model': 'Replicate Pay-per-use',
+                'typical_cost_per_run': self.TYPICAL_COST_PER_RUN,
+                'currency': 'USD',
+                'notes': 'Charged per transcription run, not per audio duration'
             },
             'limits': {
                 'max_file_size_mb': None,  # Replicate handles large files
