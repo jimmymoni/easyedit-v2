@@ -670,6 +670,57 @@ def get_audio_file(job_id):
         logger.error(f"Error serving audio file for job {job_id}: {str(e)}")
         return jsonify({"error": "Failed to serve audio file"}), 500
 
+@app.route('/audio/<job_id>/edited', methods=['GET'])
+@require_auth()
+@require_rate_limit("20 per minute, 200 per hour")
+@error_handler
+def get_edited_audio_file(job_id):
+    """Get AI-edited audio file for God Mode waveform viewer"""
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        # Get job from job_manager or fallback to processing_jobs
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        # Get edited audio file path from result
+        result = job_status.get("result", {})
+        edited_audio_file = result.get("edited_audio_file")
+
+        if not edited_audio_file or not os.path.exists(edited_audio_file):
+            return jsonify({"error": "Edited audio file not found. Please run an AI edit first."}), 404
+
+        # Determine mimetype based on extension
+        _, ext = os.path.splitext(edited_audio_file)
+        mime_types = {
+            '.wav': 'audio/wav',
+            '.mp3': 'audio/mpeg',
+            '.m4a': 'audio/mp4',
+            '.aac': 'audio/aac',
+            '.flac': 'audio/flac'
+        }
+        mimetype = mime_types.get(ext.lower(), 'application/octet-stream')
+
+        return send_file(
+            edited_audio_file,
+            mimetype=mimetype,
+            as_attachment=False  # Allow inline playback
+        )
+
+    except Exception as e:
+        logger.error(f"Error serving edited audio file for job {job_id}: {str(e)}")
+        return jsonify({"error": "Failed to serve edited audio file"}), 500
+
 @app.route('/ai-edit', methods=['POST'])
 @require_auth()
 @require_rate_limit("10 per minute, 100 per hour")
@@ -703,34 +754,272 @@ def ai_edit_timeline():
 
         # Get timeline data (would load from processed result)
         from parsers.drt_parser import DRTParser
+        from parsers.drt_writer import DRTWriter
         from services.ai_editor import AITimelineEditor
 
         drt_file = job_status.get("drt_file")
         if not drt_file or not os.path.exists(drt_file):
             return jsonify({"error": "Timeline file not found"}), 404
 
-        # Parse timeline
+        # Parse original timeline
         parser = DRTParser()
         timeline = parser.parse_file(drt_file)
 
+        # Load transcription data if available
+        transcription_data = job_status.get("result", {}).get("transcription")
+
         # Process with AI editor
         editor = AITimelineEditor()
-        result = editor.process_prompt(prompt, timeline, transcription_data=None)
+        result = editor.process_prompt(prompt, timeline, transcription_data)
 
-        logger.info(f"AI edit completed for job {job_id}: {result.get('message')}")
+        if not result.get('success'):
+            return jsonify({
+                "job_id": job_id,
+                "success": False,
+                "message": result.get('message', 'AI edit failed'),
+                "prompt": prompt
+            }), 400
 
-        return jsonify({
-            "job_id": job_id,
-            "success": result.get('success', True),
-            "operation": result.get('operation', 'unknown'),
-            "message": result.get('message', 'Edit completed'),
-            "changes_made": result.get('changes_made', {}),
-            "prompt": prompt
-        })
+        # Save edited timeline to disk
+        edited_timeline = result.get('timeline')
+        output_filename = f"{job_id}_ai_edited.drt"
+        output_path = os.path.join(Config.TEMP_FOLDER, output_filename)
+
+        writer = DRTWriter()
+        if writer.write_timeline(edited_timeline, output_path):
+            # Generate edited audio file from the edited timeline
+            from services.audio_extractor import AudioExtractor
+
+            audio_file = job_status.get("audio_file")
+            edited_audio_filename = f"{job_id}_ai_edited_audio.wav"
+            edited_audio_path = os.path.join(Config.TEMP_FOLDER, edited_audio_filename)
+
+            extractor = AudioExtractor()
+            audio_generated = extractor.extract_audio_from_timeline(
+                original_audio_path=audio_file,
+                timeline=edited_timeline,
+                output_path=edited_audio_path,
+                crossfade_ms=50  # 50ms crossfade for smooth transitions
+            )
+
+            # Update job status with new edited timeline path and audio path
+            if isinstance(job_status.get("result"), dict):
+                job_status["result"]["output_file"] = output_path
+                if audio_generated:
+                    job_status["result"]["edited_audio_file"] = edited_audio_path
+                    logger.info(f"Generated edited audio: {edited_audio_path}")
+                else:
+                    logger.warning(f"Failed to generate edited audio for job {job_id}")
+
+                job_manager.update_job_status(
+                    job_id=job_id,
+                    status=job_status.get("status", "completed"),
+                    result=job_status["result"]
+                )
+
+            logger.info(f"AI edit completed for job {job_id}: {result.get('message')}")
+
+            return jsonify({
+                "job_id": job_id,
+                "success": True,
+                "operation": result.get('operation', 'unknown'),
+                "message": result.get('message', 'Edit completed'),
+                "changes_made": result.get('changes_made', {}),
+                "edited_file": output_path,
+                "prompt": prompt
+            })
+        else:
+            return jsonify({"error": "Failed to save edited timeline"}), 500
 
     except Exception as e:
         logger.error(f"Error processing AI edit: {str(e)}")
         return jsonify({"error": f"AI edit failed: {str(e)}"}), 500
+
+@app.route('/timeline-comparison/<job_id>', methods=['GET'])
+@require_auth()
+@error_handler
+def get_timeline_comparison(job_id):
+    """Get timeline comparison data (original vs edited) for visual preview"""
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        if job_status.get("status") != "completed":
+            return jsonify({"error": "Job must be completed before comparison"}), 400
+
+        # Get original and edited timeline files
+        from parsers.drt_parser import DRTParser
+
+        original_drt = job_status.get("drt_file")
+        edited_drt = job_status.get("result", {}).get("output_file")
+
+        if not original_drt or not os.path.exists(original_drt):
+            return jsonify({"error": "Original timeline file not found"}), 404
+
+        # Parse original timeline
+        parser = DRTParser()
+        original_timeline = parser.parse_file(original_drt)
+
+        # Parse edited timeline (if exists)
+        edited_timeline = None
+        if edited_drt and os.path.exists(edited_drt):
+            edited_timeline = parser.parse_file(edited_drt)
+
+        # Generate comparison data
+        comparison = generate_timeline_comparison(original_timeline, edited_timeline)
+
+        return jsonify({
+            "job_id": job_id,
+            "has_edits": edited_timeline is not None,
+            "original": comparison["original"],
+            "edited": comparison["edited"],
+            "diff": comparison["diff"],
+            "stats": comparison["stats"]
+        })
+
+    except Exception as e:
+        logger.error(f"Error generating timeline comparison: {str(e)}")
+        return jsonify({"error": f"Comparison failed: {str(e)}"}), 500
+
+def generate_timeline_comparison(original_timeline, edited_timeline=None):
+    """Generate comparison data for visual timeline preview"""
+
+    # Extract clips from original timeline
+    original_clips = []
+    for track in original_timeline.tracks:
+        for clip in track.clips:
+            original_clips.append({
+                "name": clip.name,
+                "start": clip.start_time,
+                "end": clip.end_time,
+                "duration": clip.duration,
+                "track": track.index,
+                "track_name": track.name,
+                "enabled": clip.enabled
+            })
+
+    # Calculate original duration
+    original_duration = original_timeline.calculate_duration()
+
+    # If no edited timeline, return only original data
+    if not edited_timeline:
+        return {
+            "original": {
+                "clips": original_clips,
+                "duration": original_duration,
+                "total_clips": len(original_clips)
+            },
+            "edited": None,
+            "diff": {
+                "removed_regions": [],
+                "kept_regions": original_clips,
+                "total_removed_duration": 0,
+                "compression_ratio": 1.0
+            },
+            "stats": {
+                "original_duration": original_duration,
+                "edited_duration": original_duration,
+                "time_saved": 0,
+                "clips_removed": 0,
+                "compression_percentage": 0
+            }
+        }
+
+    # Extract clips from edited timeline
+    edited_clips = []
+    for track in edited_timeline.tracks:
+        for clip in track.clips:
+            edited_clips.append({
+                "name": clip.name,
+                "start": clip.start_time,
+                "end": clip.end_time,
+                "duration": clip.duration,
+                "track": track.index,
+                "track_name": track.name,
+                "enabled": clip.enabled
+            })
+
+    # Calculate edited duration
+    edited_duration = edited_timeline.calculate_duration()
+
+    # Calculate diff regions (what was removed)
+    removed_regions = calculate_removed_regions(original_clips, edited_clips)
+    kept_regions = edited_clips
+
+    # Calculate statistics
+    total_removed_duration = sum(region["duration"] for region in removed_regions)
+    time_saved = original_duration - edited_duration
+    compression_ratio = edited_duration / original_duration if original_duration > 0 else 1.0
+    compression_percentage = (1 - compression_ratio) * 100
+
+    return {
+        "original": {
+            "clips": original_clips,
+            "duration": original_duration,
+            "total_clips": len(original_clips)
+        },
+        "edited": {
+            "clips": edited_clips,
+            "duration": edited_duration,
+            "total_clips": len(edited_clips)
+        },
+        "diff": {
+            "removed_regions": removed_regions,
+            "kept_regions": kept_regions,
+            "total_removed_duration": total_removed_duration,
+            "compression_ratio": compression_ratio
+        },
+        "stats": {
+            "original_duration": original_duration,
+            "edited_duration": edited_duration,
+            "time_saved": time_saved,
+            "clips_removed": len(original_clips) - len(edited_clips),
+            "compression_percentage": round(compression_percentage, 2)
+        }
+    }
+
+def calculate_removed_regions(original_clips, edited_clips):
+    """Calculate which time regions were removed from the timeline"""
+    removed_regions = []
+
+    # Sort clips by start time
+    original_sorted = sorted(original_clips, key=lambda c: c["start"])
+    edited_sorted = sorted(edited_clips, key=lambda c: c["start"])
+
+    # Simple diff: find original clips that don't exist in edited
+    # This is a simplified version - real implementation would be more sophisticated
+    edited_times = set()
+    for clip in edited_sorted:
+        for t in range(int(clip["start"] * 100), int(clip["end"] * 100)):
+            edited_times.add(t)
+
+    for clip in original_sorted:
+        # Check if this original clip is mostly missing in edited
+        original_time_range = range(int(clip["start"] * 100), int(clip["end"] * 100))
+        overlap = sum(1 for t in original_time_range if t in edited_times)
+
+        if overlap / len(list(original_time_range)) < 0.5:  # Less than 50% overlap
+            removed_regions.append({
+                "start": clip["start"],
+                "end": clip["end"],
+                "duration": clip["duration"],
+                "name": clip["name"]
+            })
+
+    return removed_regions
 
 @app.route('/transcription/<job_id>', methods=['GET'])
 def get_transcription(job_id):
@@ -754,18 +1043,30 @@ def get_transcription(job_id):
     if not transcription_data:
         return jsonify({"error": "Transcription data not found"}), 404
 
-    # Transform segments to frontend-expected format
-    # Frontend expects: {timestamp, speaker, text, confidence}
+    # Transform segments to frontend-expected format with word-level timestamps
+    # Frontend expects: {timestamp, speaker, text, confidence, words}
     # Backend provides: {start, end, speaker, text, confidence, words}
     segments = transcription_data.get('segments', [])
     transformed_segments = []
 
     for seg in segments:
+        # Transform word-level data for karaoke-style highlighting
+        words = seg.get('words', [])
+        transformed_words = []
+        for word in words:
+            transformed_words.append({
+                'word': word.get('word', '').strip(),
+                'start': word.get('start', 0),
+                'end': word.get('end', 0),
+                'confidence': word.get('probability', 0.85)
+            })
+
         transformed_segments.append({
             'timestamp': seg.get('start', 0),  # Use 'start' time as timestamp
             'speaker': seg.get('speaker', 'UNKNOWN'),
             'text': seg.get('text', ''),
-            'confidence': seg.get('confidence', 0.85)
+            'confidence': seg.get('confidence', 0.85),
+            'words': transformed_words  # Include word-level timestamps
         })
 
     # Return transformed data with metadata

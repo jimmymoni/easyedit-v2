@@ -570,6 +570,40 @@ LOG_LEVEL=INFO
 - **Recommendation**: Continue with Google Cloud STT V1 with optimized settings
 - **Time**: ~2.5 hours
 
+### Session 10 Summary (October 28, 2025) - 🎬 GOD MODE AUDIO EXTRACTION
+- **Major Achievement**: Implemented real audio waveform modification for AI montage editing
+- **Problem Solved**: pydub incompatible with Python 3.13 (missing `audioop` module)
+- **Solution**: Rewrote `AudioExtractor` to use ffmpeg directly via subprocess
+- **Implementation** (~2 hours):
+  - ✅ Created Python 3.13-compatible `audio_extractor.py` (260 lines)
+  - ✅ Direct ffmpeg integration for segment extraction and concatenation
+  - ✅ Added `/audio/<job_id>/edited` endpoint to serve edited audio
+  - ✅ Updated `EnhancedWaveformViewer.tsx` to switch between original/edited audio
+  - ✅ Modified AI edit endpoint to generate edited audio after timeline creation
+- **Key Features**:
+  - Extract specific time segments from original audio using ffmpeg
+  - Concatenate multiple segments with smooth transitions
+  - Support all audio formats (WAV, MP3, M4A, AAC, FLAC)
+  - Automatic cleanup of temporary segment files
+  - Duration tracking and compression percentage logging
+- **Docker/Production Ready**:
+  - ✅ Updated `Dockerfile` to Python 3.13-slim
+  - ✅ Added ffmpeg + ffprobe to Docker image
+  - ✅ Documented ffmpeg requirement in CLAUDE.md
+  - ✅ Works transparently in containerized deployment
+- **Files Modified**:
+  - ✅ `backend/services/audio_extractor.py` (rewritten for Python 3.13)
+  - ✅ `backend/app.py` (lines 790-803: generate edited audio, 673-722: new endpoint)
+  - ✅ `frontend/src/components/godmode/EnhancedWaveformViewer.tsx` (audio switching)
+  - ✅ `backend/Dockerfile` (Python 3.13 + ffmpeg/ffprobe)
+- **User Concern Addressed**: Audio and XML now properly rearrange based on AI prompts
+  - Timeline clips extracted and concatenated into new audio file
+  - Edited DRT XML reflects only the montage segments
+  - Frontend can toggle between original and edited waveforms
+- **Deployment Strategy**: Docker-based SaaS (users don't install ffmpeg)
+- **Status**: ✅ Backend running with new implementation, ready for user testing
+- **Time**: ~2 hours
+
 **Next Priorities for Future Sessions:**
 
 ### ~~Priority 1: AI Integration~~ ✅ COMPLETED (Session 5, upgraded Session 8)

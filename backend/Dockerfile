@@ -1,11 +1,15 @@
-FROM python:3.9-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including ffmpeg for audio processing
+# ffmpeg: Audio format conversion and segment extraction
+# ffprobe: Audio duration detection
+# libsndfile1: Audio file I/O for scipy/numpy
 RUN apt-get update && apt-get install -y \
     curl \
     ffmpeg \
+    ffprobe \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
