@@ -1022,6 +1022,7 @@ def calculate_removed_regions(original_clips, edited_clips):
     return removed_regions
 
 @app.route('/transcription/<job_id>', methods=['GET'])
+@require_auth()
 def get_transcription(job_id):
     """Get transcription data for a job"""
     # Validate job ID
