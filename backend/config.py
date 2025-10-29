@@ -58,6 +58,10 @@ class Config:
     ALLOWED_AUDIO_EXTENSIONS = {'wav', 'mp3', 'm4a', 'aac', 'flac'}
     ALLOWED_DRT_EXTENSIONS = {'drt', 'xml'}
 
+    # Replicate API Configuration
+    # Max file size for direct upload to Replicate (SDK limit ~100MB, use 80MB for safety)
+    REPLICATE_MAX_FILE_SIZE_MB = int(os.getenv('REPLICATE_MAX_FILE_SIZE_MB', '80'))
+
     @staticmethod
     def init_app(app):
         # Ensure upload and temp directories exist

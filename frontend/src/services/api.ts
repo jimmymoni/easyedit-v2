@@ -223,3 +223,33 @@ export const submitAIEdit = async (jobId: string, prompt: string): Promise<any> 
   });
   return response.data;
 };
+
+// God Mode - Transcription API
+export const getTranscription = async (jobId: string): Promise<any> => {
+  const response = await api.get(`/transcription/${jobId}`);
+  return response.data;
+};
+
+// God Mode - Timeline Comparison API
+export const getTimelineComparison = async (jobId: string): Promise<any> => {
+  const response = await api.get(`/timeline-comparison/${jobId}`);
+  return response.data;
+};
+
+// God Mode - AI Chat API
+export const sendChatMessage = async (jobId: string, message: string): Promise<any> => {
+  const response = await api.post('/ai-chat', {
+    job_id: jobId,
+    message: message,
+  });
+  return response.data;
+};
+
+// God Mode - AI Preview API
+export const getAIPreview = async (jobId: string, params: Record<string, any>): Promise<any> => {
+  const response = await api.post('/ai-preview', {
+    job_id: jobId,
+    params: params,
+  });
+  return response.data;
+};

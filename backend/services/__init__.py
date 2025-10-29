@@ -9,5 +9,6 @@ from .edit_rules import EditRulesEngine
 from .timeline_editor import TimelineEditingEngine
 from .openai_client import OpenAIClient
 from .ai_enhancer import AIEnhancementService
+from .ai_chat_handler import AIChatHandler
 
-__all__ = ['ReplicateWhisperClient', 'GoogleSTTV1Client', 'AudioAnalyzer', 'EditRulesEngine', 'TimelineEditingEngine', 'OpenAIClient', 'AIEnhancementService']
+__all__ = ['ReplicateWhisperClient', 'GoogleSTTV1Client', 'AudioAnalyzer', 'EditRulesEngine', 'TimelineEditingEngine', 'OpenAIClient', 'AIEnhancementService', 'AIChatHandler']

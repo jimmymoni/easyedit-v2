@@ -245,6 +245,7 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
             'output_file': output_path,
             'stats': stats,
             'transcription_available': transcription_data is not None,
+            'transcription': transcription_data,  # Include full transcription data
             'transcription_error': transcription_error,
             'transcription_error_details': transcription_error_details,
             'audio_analysis': {

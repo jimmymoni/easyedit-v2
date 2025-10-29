@@ -1,20 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, Download, FileText, Clock } from 'lucide-react';
 import * as api from '../../services/api';
+
+interface Word {
+  word: string;
+  start: number;
+  end: number;
+  confidence: number;
+}
 
 interface TranscriptionSegment {
   timestamp: number;
   speaker: string;
   text: string;
   confidence?: number;
+  words?: Word[];
 }
 
 interface TranscriptionViewerProps {
   jobId: string;
   onSeekAudio?: (timestamp: number) => void;
+  currentPlaybackTime?: number; // NEW: Current audio playback position
+  isEditedMode?: boolean; // NEW: Whether viewing edited audio (disables highlighting)
 }
 
-const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({ jobId, onSeekAudio }) => {
+const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({
+  jobId,
+  onSeekAudio,
+  currentPlaybackTime = 0,
+  isEditedMode = false
+}) => {
   const [transcription, setTranscription] = useState<TranscriptionSegment[]>([]);
   const [filteredTranscription, setFilteredTranscription] = useState<TranscriptionSegment[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -22,6 +37,10 @@ const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({ jobId, onSeek
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentWordIndex, setCurrentWordIndex] = useState<{segmentIndex: number, wordIndex: number} | null>(null);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const currentWordRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     loadTranscription();
@@ -41,6 +60,67 @@ const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({ jobId, onSeek
       setFilteredTranscription(filtered);
     }
   }, [searchQuery, transcription, speakerLabels]);
+
+  // Real-time word highlighting based on playback position
+  useEffect(() => {
+    // Disable highlighting when viewing edited audio
+    if (isEditedMode) {
+      setCurrentWordIndex(null);
+      return;
+    }
+
+    if (!transcription.length || !currentPlaybackTime) return;
+
+    let foundWord = false;
+
+    // Find the current word being spoken
+    for (let segIdx = 0; segIdx < transcription.length; segIdx++) {
+      const segment = transcription[segIdx];
+      const words = segment.words || [];
+
+      for (let wordIdx = 0; wordIdx < words.length; wordIdx++) {
+        const word = words[wordIdx];
+
+        // Check if current playback time is within this word's timespan
+        if (currentPlaybackTime >= word.start && currentPlaybackTime <= word.end) {
+          setCurrentWordIndex({ segmentIndex: segIdx, wordIndex: wordIdx });
+          foundWord = true;
+          break;
+        }
+      }
+
+      if (foundWord) break;
+    }
+
+    // If no word is currently playing, clear highlight
+    if (!foundWord) {
+      setCurrentWordIndex(null);
+    }
+  }, [currentPlaybackTime, transcription, isEditedMode]);
+
+  // Auto-scroll to keep current word visible
+  useEffect(() => {
+    if (currentWordRef.current && scrollContainerRef.current) {
+      const container = scrollContainerRef.current;
+      const wordElement = currentWordRef.current;
+
+      const containerRect = container.getBoundingClientRect();
+      const wordRect = wordElement.getBoundingClientRect();
+
+      // Check if word is not fully visible in the container
+      const isAbove = wordRect.top < containerRect.top;
+      const isBelow = wordRect.bottom > containerRect.bottom;
+
+      if (isAbove || isBelow) {
+        // Scroll to center the word in the container
+        const scrollTop = wordElement.offsetTop - container.offsetHeight / 2 + wordElement.offsetHeight / 2;
+        container.scrollTo({
+          top: scrollTop,
+          behavior: 'smooth'
+        });
+      }
+    }
+  }, [currentWordIndex]);
 
   const loadTranscription = async () => {
     try {
@@ -90,6 +170,13 @@ const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({ jobId, onSeek
   const handleTimestampClick = (timestamp: number) => {
     if (onSeekAudio) {
       onSeekAudio(timestamp);
+    }
+  };
+
+  // NEW: Handle word click to seek to that exact word
+  const handleWordClick = (wordStart: number) => {
+    if (onSeekAudio) {
+      onSeekAudio(wordStart);
     }
   };
 
@@ -230,11 +317,23 @@ const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({ jobId, onSeek
         </div>
       </div>
 
-      {/* Transcription Segments */}
-      <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-        {filteredTranscription.map((segment, index) => (
+      {/* Edited Mode Banner */}
+      {isEditedMode && (
+        <div className="mb-4 bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-lg p-3">
+          <p className="text-[#FF6B35] text-sm font-medium">
+            📝 Viewing edited montage - Word highlighting is disabled for this view
+          </p>
+        </div>
+      )}
+
+      {/* Transcription Segments with Karaoke-style Word Highlighting */}
+      <div
+        ref={scrollContainerRef}
+        className="space-y-4 max-h-[600px] overflow-y-auto pr-2"
+      >
+        {filteredTranscription.map((segment, segmentIndex) => (
           <div
-            key={index}
+            key={segmentIndex}
             className="bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg p-4 hover:border-[#FF6B35]/30 transition-colors"
           >
             <div className="flex items-start space-x-3">
@@ -277,10 +376,40 @@ const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({ jobId, onSeek
                 )}
               </div>
 
-              {/* Text */}
-              <p className="text-[#EAEAEA] text-sm leading-relaxed flex-1">
-                {segment.text}
-              </p>
+              {/* Text with Word-by-Word Highlighting */}
+              <div className="text-sm leading-relaxed flex-1">
+                {segment.words && segment.words.length > 0 ? (
+                  // Render word-by-word with karaoke highlighting
+                  <span className="inline-flex flex-wrap gap-x-1">
+                    {segment.words.map((word, wordIndex) => {
+                      const isCurrentWord =
+                        currentWordIndex?.segmentIndex === segmentIndex &&
+                        currentWordIndex?.wordIndex === wordIndex;
+
+                      return (
+                        <span
+                          key={wordIndex}
+                          ref={isCurrentWord ? currentWordRef : null}
+                          onClick={() => handleWordClick(word.start)}
+                          className={`cursor-pointer transition-all duration-200 rounded px-0.5 ${
+                            isCurrentWord
+                              ? 'bg-[#FF6B35] text-white font-semibold scale-105'
+                              : 'text-[#EAEAEA] hover:bg-[#2A2A2A]'
+                          }`}
+                          title={`${word.start.toFixed(2)}s - ${word.end.toFixed(2)}s (${(word.confidence * 100).toFixed(0)}% confidence)`}
+                        >
+                          {word.word}
+                        </span>
+                      );
+                    })}
+                  </span>
+                ) : (
+                  // Fallback: Show full text if no word-level data
+                  <p className="text-[#EAEAEA]">
+                    {segment.text}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         ))}

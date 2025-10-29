@@ -1,15 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { Play, Pause, Volume2, ZoomIn, ZoomOut } from 'lucide-react';
+import axios from 'axios';
 
 interface WaveformViewerProps {
   jobId: string;
   audioUrl: string;
+  onSeekReady?: (seekFn: (time: number) => void) => void;
+  onTimeUpdate?: (currentTime: number) => void; // NEW: Expose playback position
 }
 
-const WaveformViewer: React.FC<WaveformViewerProps> = ({ jobId, audioUrl }) => {
+const WaveformViewer: React.FC<WaveformViewerProps> = ({ jobId, audioUrl, onSeekReady, onTimeUpdate }) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
+  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState('0:00');
@@ -19,11 +23,26 @@ const WaveformViewer: React.FC<WaveformViewerProps> = ({ jobId, audioUrl }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Expose seek function to parent via callback
+  useEffect(() => {
+    if (wavesurferRef.current && !isLoading && onSeekReady) {
+      const seekFn = (time: number) => {
+        if (wavesurferRef.current) {
+          wavesurferRef.current.seekTo(time / wavesurferRef.current.getDuration());
+        }
+      };
+      onSeekReady(seekFn);
+    }
+  }, [isLoading, onSeekReady]);
+
   useEffect(() => {
     if (!waveformRef.current) return;
 
+    let wavesurfer: WaveSurfer | null = null;
+    let isMounted = true;
+
     // Initialize WaveSurfer
-    const wavesurfer = WaveSurfer.create({
+    wavesurfer = WaveSurfer.create({
       container: waveformRef.current,
       waveColor: '#2A2A2A',
       progressColor: '#FF6B35',
@@ -38,32 +57,109 @@ const WaveformViewer: React.FC<WaveformViewerProps> = ({ jobId, audioUrl }) => {
 
     wavesurferRef.current = wavesurfer;
 
-    // Load audio
-    wavesurfer.load(audioUrl);
+    // Set loading timeout (15 seconds)
+    loadingTimeoutRef.current = setTimeout(() => {
+      if (isMounted && isLoading) {
+        setError('Audio loading timed out. Please try refreshing the page.');
+        setIsLoading(false);
+      }
+    }, 15000);
+
+    // Fetch audio with authentication headers
+    const loadAudioWithAuth = async () => {
+      try {
+        // Get token from localStorage
+        const tokens = localStorage.getItem('easyedit_tokens');
+        if (!tokens) {
+          throw new Error('No authentication token found');
+        }
+
+        const parsedTokens = JSON.parse(tokens);
+
+        // Fetch audio file with auth header
+        const response = await axios.get(audioUrl, {
+          headers: {
+            Authorization: `Bearer ${parsedTokens.access_token}`,
+          },
+          responseType: 'blob',
+        });
+
+        // Create blob URL
+        const blob = response.data;
+        const blobUrl = URL.createObjectURL(blob);
+
+        // Load blob into wavesurfer
+        if (wavesurfer && isMounted) {
+          wavesurfer.load(blobUrl);
+        }
+      } catch (err: any) {
+        console.error('Error loading audio:', err);
+        if (isMounted) {
+          if (err.response?.status === 401) {
+            setError('Authentication required. Please log in again.');
+          } else if (err.response?.status === 404) {
+            setError('Audio file not found for this job.');
+          } else {
+            setError(err.message || 'Failed to load audio file');
+          }
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadAudioWithAuth();
 
     // Event listeners
     wavesurfer.on('ready', () => {
-      setIsLoading(false);
-      setDuration(formatTime(wavesurfer.getDuration()));
-      wavesurfer.setVolume(volume);
+      if (isMounted) {
+        setIsLoading(false);
+        setDuration(formatTime(wavesurfer!.getDuration()));
+        wavesurfer!.setVolume(volume);
+        if (loadingTimeoutRef.current) {
+          clearTimeout(loadingTimeoutRef.current);
+        }
+      }
     });
 
     wavesurfer.on('audioprocess', () => {
-      setCurrentTime(formatTime(wavesurfer.getCurrentTime()));
+      if (isMounted) {
+        const currentTimeValue = wavesurfer!.getCurrentTime();
+        setCurrentTime(formatTime(currentTimeValue));
+        // Emit current playback position to parent for transcription highlighting
+        if (onTimeUpdate) {
+          onTimeUpdate(currentTimeValue);
+        }
+      }
     });
 
-    wavesurfer.on('play', () => setIsPlaying(true));
-    wavesurfer.on('pause', () => setIsPlaying(false));
-    wavesurfer.on('finish', () => setIsPlaying(false));
+    wavesurfer.on('play', () => {
+      if (isMounted) setIsPlaying(true);
+    });
+
+    wavesurfer.on('pause', () => {
+      if (isMounted) setIsPlaying(false);
+    });
+
+    wavesurfer.on('finish', () => {
+      if (isMounted) setIsPlaying(false);
+    });
 
     wavesurfer.on('error', (err) => {
       console.error('WaveSurfer error:', err);
-      setError('Failed to load audio file');
-      setIsLoading(false);
+      if (isMounted) {
+        setError('Failed to load audio file. The file may be corrupted or in an unsupported format.');
+        setIsLoading(false);
+      }
     });
 
     return () => {
-      wavesurfer.destroy();
+      isMounted = false;
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
+      if (wavesurfer) {
+        wavesurfer.destroy();
+      }
     };
   }, [audioUrl]);
 
@@ -74,10 +170,15 @@ const WaveformViewer: React.FC<WaveformViewerProps> = ({ jobId, audioUrl }) => {
   }, [volume]);
 
   useEffect(() => {
-    if (wavesurferRef.current) {
-      wavesurferRef.current.zoom(zoom);
+    if (wavesurferRef.current && !isLoading) {
+      try {
+        wavesurferRef.current.zoom(zoom);
+      } catch (err) {
+        // Ignore zoom errors if audio isn't loaded yet
+        console.debug('Zoom not available yet');
+      }
     }
-  }, [zoom]);
+  }, [zoom, isLoading]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -130,9 +231,31 @@ const WaveformViewer: React.FC<WaveformViewerProps> = ({ jobId, audioUrl }) => {
         )}
         <div
           ref={waveformRef}
-          className="rounded-lg overflow-hidden"
+          className="rounded-lg overflow-hidden waveform-container"
           style={{ minHeight: '120px' }}
         />
+        <style>{`
+          /* Style the WaveSurfer scrollbar */
+          .waveform-container ::-webkit-scrollbar {
+            height: 8px;
+          }
+          .waveform-container ::-webkit-scrollbar-track {
+            background: #2A2A2A;
+            border-radius: 4px;
+          }
+          .waveform-container ::-webkit-scrollbar-thumb {
+            background: #FF6B35;
+            border-radius: 4px;
+          }
+          .waveform-container ::-webkit-scrollbar-thumb:hover {
+            background: #FF8555;
+          }
+          /* Firefox scrollbar styling */
+          .waveform-container * {
+            scrollbar-width: thin;
+            scrollbar-color: #FF6B35 #2A2A2A;
+          }
+        `}</style>
       </div>
 
       {/* Controls */}

@@ -835,6 +835,132 @@ def ai_edit_timeline():
         logger.error(f"Error processing AI edit: {str(e)}")
         return jsonify({"error": f"AI edit failed: {str(e)}"}), 500
 
+
+@app.route('/ai-chat', methods=['POST'])
+@require_auth()
+@error_handler
+def ai_chat():
+    """Conversational AI endpoint for God Mode chat interface"""
+    try:
+        # Validate request
+        data = validate_json_request(request)
+        job_id = validate_job_id(data.get('job_id'))
+        message = data.get('message', '').strip()
+
+        if not message:
+            return jsonify({"error": "Message is required"}), 400
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        if job_status.get("status") != "completed":
+            return jsonify({"error": "Job must be completed before using AI chat"}), 400
+
+        # Get timeline data
+        from parsers.drt_parser import DRTParser
+        from services.ai_chat_handler import AIChatHandler
+
+        drt_file = job_status.get("drt_file")
+        if not drt_file or not os.path.exists(drt_file):
+            return jsonify({"error": "Timeline file not found"}), 404
+
+        # Parse timeline
+        parser = DRTParser()
+        timeline = parser.parse_file(drt_file)
+
+        # Load transcription data if available
+        transcription_data = job_status.get("result", {}).get("transcription")
+
+        # Process with chat handler
+        chat_handler = AIChatHandler()
+        response = chat_handler.analyze_message(message, timeline, transcription_data)
+
+        logger.info(f"AI chat response for job {job_id}: needs_confirmation={response.get('needs_confirmation')}")
+
+        return jsonify({
+            "job_id": job_id,
+            "message": response.get('message'),
+            "needs_confirmation": response.get('needs_confirmation', False),
+            "options": response.get('options', []),
+            "preview_data": response.get('preview_data')
+        })
+
+    except Exception as e:
+        logger.error(f"Error processing AI chat: {str(e)}")
+        return jsonify({"error": f"AI chat failed: {str(e)}"}), 500
+
+
+@app.route('/ai-preview', methods=['POST'])
+@require_auth()
+@error_handler
+def ai_preview():
+    """Generate preview of AI operation before executing"""
+    try:
+        # Validate request
+        data = validate_json_request(request)
+        job_id = validate_job_id(data.get('job_id'))
+        params = data.get('params', {})
+
+        if not params:
+            return jsonify({"error": "Parameters are required"}), 400
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        if job_status.get("status") != "completed":
+            return jsonify({"error": "Job must be completed before preview"}), 400
+
+        # Get timeline data
+        from parsers.drt_parser import DRTParser
+        from services.ai_chat_handler import AIChatHandler
+
+        drt_file = job_status.get("drt_file")
+        if not drt_file or not os.path.exists(drt_file):
+            return jsonify({"error": "Timeline file not found"}), 404
+
+        # Parse timeline
+        parser = DRTParser()
+        timeline = parser.parse_file(drt_file)
+
+        # Load transcription data if available
+        transcription_data = job_status.get("result", {}).get("transcription")
+
+        # Generate preview
+        chat_handler = AIChatHandler()
+        preview = chat_handler.generate_preview(params, timeline, transcription_data)
+
+        logger.info(f"Generated preview for job {job_id}: {preview.get('operation')}")
+
+        return jsonify({
+            "job_id": job_id,
+            "preview": preview
+        })
+
+    except Exception as e:
+        logger.error(f"Error generating preview: {str(e)}")
+        return jsonify({"error": f"Preview generation failed: {str(e)}"}), 500
+
+
 @app.route('/timeline-comparison/<job_id>', methods=['GET'])
 @require_auth()
 @error_handler

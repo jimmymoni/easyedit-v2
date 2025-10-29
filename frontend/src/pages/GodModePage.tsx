@@ -1,37 +1,37 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Zap } from 'lucide-react';
-import WaveformViewer from '../components/godmode/WaveformViewer';
-import PromptInput from '../components/godmode/PromptInput';
+import { ArrowLeft, Zap, AudioWaveform, FileText } from 'lucide-react';
+import EnhancedWaveformViewer from '../components/godmode/EnhancedWaveformViewer';
+import TranscriptionViewer from '../components/godmode/TranscriptionViewer';
+import ChatInterface from '../components/godmode/ChatInterface';
 import TimelineControls from '../components/godmode/TimelineControls';
 import * as api from '../services/api';
+
+type TabType = 'waveform' | 'transcription';
 
 const GodModePage: React.FC = () => {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
   const [audioUrl] = useState(`http://localhost:5000/audio/${jobId}`);
+  const [activeTab, setActiveTab] = useState<TabType>('waveform');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [editMessage, setEditMessage] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [currentPlaybackTime, setCurrentPlaybackTime] = useState(0); // NEW: Track playback position for karaoke highlighting
+  const [autoSwitchToEdited, setAutoSwitchToEdited] = useState(false); // Auto-switch waveform after AI edit
+  const [isEditedMode, setIsEditedMode] = useState(false); // NEW: Track whether viewing edited audio
+  const waveformSeekRef = useRef<((time: number) => void) | null>(null);
 
-  const handlePromptSubmit = async (prompt: string) => {
-    if (!jobId) return;
+  const handleEditExecuted = (result: any) => {
+    setEditMessage(result.message || 'Edit completed successfully!');
+    console.log('AI Edit result:', result);
 
-    setIsProcessing(true);
-    setEditMessage(null);
-    setEditError(null);
+    // Trigger auto-switch to edited view
+    setAutoSwitchToEdited(true);
 
-    try {
-      const result = await api.submitAIEdit(jobId, prompt);
-      setEditMessage(result.message || 'Edit completed successfully!');
-      console.log('AI Edit result:', result);
-    } catch (error: any) {
-      console.error('AI Edit failed:', error);
-      setEditError(error?.response?.data?.error || 'AI edit failed. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
+    // Switch to waveform tab to see the changes
+    setActiveTab('waveform');
   };
 
   const handleExport = async () => {
@@ -59,7 +59,7 @@ const GodModePage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-[#000000]">
       {/* Header */}
       <header className="bg-[#181818] border-b border-[#2A2A2A] shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -88,8 +88,66 @@ const GodModePage: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Waveform Visualization */}
-        {jobId && <WaveformViewer jobId={jobId} audioUrl={audioUrl} />}
+        {/* Tab Navigation */}
+        <div className="flex items-center space-x-2 border-b border-[#2A2A2A]">
+          <button
+            onClick={() => setActiveTab('waveform')}
+            className={`flex items-center space-x-2 px-4 py-3 font-medium transition-colors ${
+              activeTab === 'waveform'
+                ? 'text-[#FF6B35] border-b-2 border-[#FF6B35]'
+                : 'text-[#EAEAEA]/70 hover:text-[#EAEAEA]'
+            }`}
+          >
+            <AudioWaveform className="h-5 w-5" />
+            <span>Waveform</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('transcription')}
+            className={`flex items-center space-x-2 px-4 py-3 font-medium transition-colors ${
+              activeTab === 'transcription'
+                ? 'text-[#FF6B35] border-b-2 border-[#FF6B35]'
+                : 'text-[#EAEAEA]/70 hover:text-[#EAEAEA]'
+            }`}
+          >
+            <FileText className="h-5 w-5" />
+            <span>Transcription</span>
+          </button>
+        </div>
+
+        {/* Tab Content */}
+        {jobId && (
+          <>
+            <div style={{ display: activeTab === 'waveform' ? 'block' : 'none' }}>
+              <EnhancedWaveformViewer
+                jobId={jobId}
+                audioUrl={audioUrl}
+                onSeekReady={(seekFn) => {
+                  waveformSeekRef.current = seekFn;
+                }}
+                onTimeUpdate={(time) => {
+                  setCurrentPlaybackTime(time);
+                }}
+                autoSwitchToEdited={autoSwitchToEdited}
+                onViewModeChange={(mode) => {
+                  setIsEditedMode(mode === 'edited');
+                }}
+              />
+            </div>
+            <div style={{ display: activeTab === 'transcription' ? 'block' : 'none' }}>
+              <TranscriptionViewer
+                jobId={jobId}
+                currentPlaybackTime={currentPlaybackTime}
+                isEditedMode={isEditedMode}
+                onSeekAudio={(timestamp) => {
+                  setActiveTab('waveform');
+                  if (waveformSeekRef.current) {
+                    waveformSeekRef.current(timestamp);
+                  }
+                }}
+              />
+            </div>
+          </>
+        )}
 
         {/* Edit Result Messages */}
         {editMessage && (
@@ -103,8 +161,8 @@ const GodModePage: React.FC = () => {
           </div>
         )}
 
-        {/* AI Prompt Input */}
-        <PromptInput onSubmit={handlePromptSubmit} isProcessing={isProcessing} />
+        {/* Chat with God */}
+        {jobId && <ChatInterface jobId={jobId} onEditExecuted={handleEditExecuted} />}
 
         {/* Timeline Controls */}
         <TimelineControls onExport={handleExport} isExporting={isExporting} />

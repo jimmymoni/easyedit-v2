@@ -85,3 +85,21 @@ code {
     @apply bg-background text-foreground;
   }
 }
+
+/* Dark themed scrollbar for chat messages */
+.chat-messages::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: #0A0A0A;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background: #2A2A2A;
+  border-radius: 4px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: #FF6B35;
+}

@@ -10,6 +10,7 @@ interface WaveformViewerProps {
   onSeekReady?: (seekFn: (time: number) => void) => void;
   onTimeUpdate?: (currentTime: number) => void;
   autoSwitchToEdited?: boolean; // Auto-switch after AI edit
+  onViewModeChange?: (mode: 'original' | 'edited') => void; // Notify when view mode changes
 }
 
 const EnhancedWaveformViewer: React.FC<WaveformViewerProps> = ({
@@ -17,7 +18,8 @@ const EnhancedWaveformViewer: React.FC<WaveformViewerProps> = ({
   audioUrl,
   onSeekReady,
   onTimeUpdate,
-  autoSwitchToEdited = false
+  autoSwitchToEdited = false,
+  onViewModeChange
 }) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
@@ -49,10 +51,10 @@ const EnhancedWaveformViewer: React.FC<WaveformViewerProps> = ({
     }
   }, [isLoading, onSeekReady]);
 
-  // Load comparison data
+  // Load comparison data (reload when AI edit completes)
   useEffect(() => {
     loadComparisonData();
-  }, [jobId]);
+  }, [jobId, autoSwitchToEdited]);
 
   // Auto-switch to edited view when AI edit completes
   useEffect(() => {
@@ -236,6 +238,11 @@ const EnhancedWaveformViewer: React.FC<WaveformViewerProps> = ({
   const toggleViewMode = () => {
     const newMode = viewMode === 'original' ? 'edited' : 'original';
     setViewMode(newMode);
+
+    // Notify parent component about view mode change
+    if (onViewModeChange) {
+      onViewModeChange(newMode);
+    }
 
     // Switch audio URL based on view mode
     if (newMode === 'edited') {
