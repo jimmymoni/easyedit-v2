@@ -8,15 +8,33 @@ This is **easyedit-v2**, a platform that automates timeline edits based on sourc
 
 ## Architecture
 
-- **Backend**: Flask web server in `backend/app.py` exposing REST endpoints
-- **Frontend**: (to be built) React UI for uploading audio + XML and downloading edited .drt
-- **Virtual Environment**: Python venv in `venv/`
-- **Key Workflow**:
-  1. Receive `POST /upload` with `audio` and `drt` files
-  2. Parse `.drt` XML to extract segment timings
-  3. Apply cut/edit rules to the audio and timing data
-  4. Produce a new `.drt` XML reflecting edits
-  5. Return edited `.drt` for DaVinci Resolve import
+### Backend (Flask + Python 3.13)
+- **API**: Flask REST API with JWT authentication
+- **Transcription**:
+  - **PRIMARY**: Replicate Whisper (incredibly-fast-whisper + pyannote diarization) - $0.078/hour
+  - **BACKUP**: Google Cloud Speech-to-Text V1 - $1.62/hour (enterprise fallback)
+- **AI Enhancement**: OpenAI GPT-4 (transcript improvement, highlights, summaries, chapters)
+- **Audio Processing**: Scipy-based SimpleAudioAnalyzer (energy detection, silence removal, optimal cut points)
+- **Task Queue**: Celery with Redis (async job processing)
+- **Audio Formats**: FFmpeg for multi-format support (WAV, MP3, M4A, AAC, FLAC)
+- **Security**: XXE protection (defusedxml), path traversal prevention, rate limiting, resource controls
+
+### Frontend (React + TypeScript)
+- **Framework**: React 18 + TypeScript + Tailwind CSS
+- **Build Tool**: Vite (fast development builds)
+- **API Client**: Axios with automatic JWT token refresh
+- **Waveform Visualization**: WaveSurfer.js for interactive audio editing
+- **Design System**: Professional dark UI with orange brand identity (#FF6B35)
+
+### Key Workflow
+  1. Receive `POST /upload` with `audio` and optional `drt` files
+  2. Transcribe audio with Replicate Whisper (speaker diarization)
+  3. Parse `.drt` XML to extract segment timings (if provided)
+  4. Analyze audio for silence, speech segments, optimal cut points
+  5. Apply AI enhancement (OpenAI) for highlights, summaries, chapters
+  6. Apply intelligent editing rules to timeline data
+  7. Generate new `.drt` XML reflecting edits
+  8. Return edited `.drt` for DaVinci Resolve import
 
 ## Development Commands
 
@@ -208,9 +226,50 @@ LOG_LEVEL=INFO
 
 ## 🎯 Current Progress & Status
 
-### Development Status (Updated: October 1, 2025 - Session 2)
+### ⚠️ CURRENT STATE (As of October 29, 2025)
 
 **Backend: ✅ COMPLETE & PRODUCTION READY**
+- ✅ Flask REST API with JWT authentication (Python 3.13)
+- ✅ **PRIMARY Transcription: Replicate Whisper** ($0.078/hour - 95% cheaper than Google Cloud)
+  - incredibly-fast-whisper model with pyannote speaker diarization
+  - Multilingual support (auto-detects language)
+  - Real-time and batch processing
+- ✅ **BACKUP Transcription: Google Cloud Speech-to-Text V1** ($1.62/hour)
+  - Enterprise-grade reliability
+  - 125+ languages including Malayalam, Hindi, Tamil, Telugu
+  - Optimized for Indian English accents
+- ✅ OpenAI GPT-4 integration (transcript enhancement, highlights, summaries, chapters)
+- ✅ Scipy-based SimpleAudioAnalyzer (Python 3.13 compatible)
+- ✅ Multi-format audio support (WAV, MP3, M4A, AAC, FLAC) via FFmpeg
+- ✅ **God Mode**: AI-powered conversational timeline editor with real audio extraction
+- ✅ Security hardened (XXE, path traversal, command injection prevention)
+- ✅ Rate limiting, resource controls, comprehensive monitoring
+
+**Frontend: ✅ COMPLETE & PRODUCTION READY**
+- ✅ React 18 + TypeScript + Tailwind CSS
+- ✅ JWT authentication with automatic token refresh
+- ✅ WaveSurfer.js waveform visualization (original vs edited audio)
+- ✅ Professional dark UI with orange brand identity (#FF6B35)
+- ✅ God Mode chat interface (conversational AI editing)
+- ✅ Real-time processing status updates
+- ✅ Job history and download management
+
+**God Mode Features: ✅ FULLY FUNCTIONAL**
+- ✅ Natural language timeline editing (*"make a montage of 'best moments'"*)
+- ✅ Real audio extraction and concatenation using FFmpeg
+- ✅ Timeline preview with 3 cut styles (tight, normal, loose)
+- ✅ Edited DRT XML generation
+- ✅ Interactive waveform viewer (switch between original/edited audio)
+
+---
+
+### 📋 HISTORICAL SESSION LOGS
+
+**IMPORTANT:** The sections below document the development journey and historical decisions. The **CURRENT STATE** section above reflects what's actually in the codebase today.
+
+### Development Status (Updated: October 1, 2025 - Session 2)
+
+**Backend: ✅ COMPLETE & PRODUCTION READY** (Historical)
 - ✅ Flask application with JWT authentication
 - ✅ Rate limiting with multi-tier user support
 - ✅ WebSocket real-time job status updates
@@ -712,9 +771,52 @@ Follow these components as examples:
 ## Development Notes
 
 - Full-stack application with React frontend and Flask backend
-- AI-powered timeline editing using Soniox and OpenAI APIs
+- **AI-powered timeline editing using Replicate Whisper (PRIMARY) and OpenAI APIs**
 - Production-ready with monitoring, logging, and error handling
 - Containerized deployment with Docker Compose
 - Comprehensive API with rate limiting and validation
 - Real-time job status tracking and progress updates
 - **Design System**: Professional dark UI with orange brand identity (see DESIGN_SYSTEM.md)
+
+---
+
+## 🔍 Quick Reference: Current Tech Stack
+
+### Transcription Services (in order of usage)
+1. **Replicate Whisper** (PRIMARY)
+   - File: `backend/services/replicate_whisper_client.py`
+   - Model: `incredibly-fast-whisper` + `pyannote-speaker-diarization`
+   - Cost: $0.078/hour (~95% cheaper than Google Cloud)
+   - Config: `REPLICATE_API_TOKEN` in `.env`
+   - Features: Multilingual, auto-detect language, speaker diarization
+
+2. **Google Cloud Speech-to-Text V1** (BACKUP)
+   - File: `backend/services/google_stt_v1_client.py`
+   - Cost: $1.62/hour ($0.18 base + $1.44 diarization)
+   - Config: `GOOGLE_APPLICATION_CREDENTIALS` + `GOOGLE_CLOUD_PROJECT` in `.env`
+   - Features: 125+ languages, Indian English optimization, enterprise SLA
+
+### AI Enhancement
+- **OpenAI GPT-4** for transcript improvement, highlights, summaries, chapters
+- File: `backend/services/openai_client.py`
+- Config: `OPENAI_API_KEY` in `.env`
+
+### Audio Processing
+- **SimpleAudioAnalyzer** (Python 3.13 compatible, scipy-based)
+- File: `backend/services/simple_audio_analyzer.py`
+- Features: Energy detection, silence removal, optimal cut points, RMS analysis
+
+### God Mode AI Editor
+- **AITimelineEditor** for natural language timeline manipulation
+- File: `backend/services/ai_editor.py`
+- Features: Montage creation, silence removal, speaker filtering, filler removal
+
+### Audio Extraction
+- **AudioExtractor** for real audio segment extraction
+- File: `backend/services/audio_extractor.py`
+- Uses: FFmpeg subprocess for segment extraction and concatenation
+
+### Factory Pattern
+- **TranscriptionServiceFactory** in `backend/services/transcription_service.py`
+- Automatically selects Replicate Whisper as primary (line 251)
+- Falls back to Google Cloud if Replicate unavailable
