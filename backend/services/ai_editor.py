@@ -20,9 +20,10 @@ class AITimelineEditor:
             'filter_speaker': self._filter_by_speaker,
             'remove_fillers': self._remove_filler_words,
             'summarize': self._create_summary,
+            'short_form': self._create_short_form,
         }
 
-    def process_prompt(self, prompt: str, timeline: Timeline, transcription_data: Optional[Dict] = None) -> Dict[str, Any]:
+    def process_prompt(self, prompt: str, timeline: Timeline, transcription_data: Optional[Dict] = None, params: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Process natural language prompt and return edited timeline
 
@@ -30,6 +31,7 @@ class AITimelineEditor:
             prompt: User's natural language editing instruction
             timeline: Original timeline object
             transcription_data: Optional transcription with timestamps
+            params: Optional parameters dict (for AI chat handler)
 
         Returns:
             Dict with 'operation', 'timeline', 'message', 'changes_made'
@@ -38,10 +40,16 @@ class AITimelineEditor:
             prompt_lower = prompt.lower().strip()
             logger.info(f"Processing AI edit prompt: {prompt}")
 
-            # Detect operation type
-            operation = self._detect_operation(prompt_lower)
+            # Check if params specify an operation (from AI chat handler)
+            if params and 'operation' in params:
+                operation = params['operation']
+            else:
+                # Detect operation type from prompt
+                operation = self._detect_operation(prompt_lower)
 
-            if operation == 'montage':
+            if operation == 'short_form':
+                result = self._create_short_form(timeline, transcription_data, params)
+            elif operation == 'montage':
                 search_phrase = self._extract_search_phrase(prompt)
                 result = self._create_montage(timeline, search_phrase, transcription_data, prompt_lower)
             elif operation == 'remove_silence':
@@ -58,14 +66,14 @@ class AITimelineEditor:
             else:
                 result = {
                     'success': False,
-                    'message': f"Operation '{operation}' not yet supported. Try: montage, remove silence, filter speaker, remove fillers, or summarize.",
+                    'message': f"Operation '{operation}' not yet supported. Try: short-form reel, montage, remove silence, filter speaker, remove fillers, or summarize.",
                     'timeline': timeline
                 }
 
             return result
 
         except Exception as e:
-            logger.error(f"Error processing AI prompt: {str(e)}")
+            logger.error(f"Error processing AI prompt: {str(e)}", exc_info=True)
             return {
                 'success': False,
                 'message': f"Error processing prompt: {str(e)}",
@@ -352,32 +360,20 @@ class AITimelineEditor:
                 range_end = keep_range['end']
                 range_duration = range_end - range_start
 
-                # Find clips that overlap with this range
-                for original_clip in original_track.clips:
-                    # Check if clip overlaps with the keep range
-                    if original_clip.end_time > range_start and original_clip.start_time < range_end:
-                        # Calculate the overlap
-                        overlap_start = max(original_clip.start_time, range_start)
-                        overlap_end = min(original_clip.end_time, range_end)
-                        overlap_duration = overlap_end - overlap_start
-
-                        if overlap_duration > 0.1:  # Minimum 100ms
-                            # Calculate media offsets
-                            media_offset = overlap_start - original_clip.start_time
-                            media_start = (original_clip.media_start if original_clip.media_start else original_clip.start_time) + media_offset
-
-                            # Create new clip in the montage timeline
-                            new_clip = Clip(
-                                name=original_clip.name,
-                                start_time=current_timeline_time,
-                                end_time=current_timeline_time + overlap_duration,
-                                duration=overlap_duration,
-                                track_index=original_clip.track_index,
-                                media_start=media_start,
-                                media_end=media_start + overlap_duration,
-                                enabled=original_clip.enabled
-                            )
-                            new_track.add_clip(new_clip)
+                # FIX: Create ONE clip per transcript segment using direct audio timestamps
+                # instead of iterating through all overlapping timeline clips.
+                # This prevents duplicating audio when multiple clips overlap with one segment.
+                new_clip = Clip(
+                    name=f"AI_Segment_{len(new_track.clips) + 1}",
+                    start_time=current_timeline_time,
+                    end_time=current_timeline_time + range_duration,
+                    duration=range_duration,
+                    track_index=original_track.index,
+                    media_start=range_start,  # Direct reference to original audio timestamp
+                    media_end=range_end,      # Direct reference to original audio timestamp
+                    enabled=True
+                )
+                new_track.add_clip(new_clip)
 
                 # Move timeline position forward
                 current_timeline_time += range_duration
@@ -522,5 +518,87 @@ class AITimelineEditor:
                 'target_duration': target_duration,
                 'original_duration': 0,
                 'compression_ratio': 0
+            }
+        }
+
+    def _create_short_form(self, timeline: Timeline, transcription_data: Optional[Dict], params: Optional[Dict]) -> Dict[str, Any]:
+        """Create short-form social media content from AI-selected segments"""
+        logger.info("Creating short-form content from AI-selected segments")
+
+        if not params or 'segments' not in params:
+            return {
+                'success': False,
+                'operation': 'short_form',
+                'message': "Segments data required for short-form content creation",
+                'timeline': timeline,
+                'changes_made': {'clips_created': 0}
+            }
+
+        segments = params['segments']
+        duration = params.get('duration', 60)
+        content_type = params.get('content_type', 'engaging')
+        platform = params.get('platform', 'instagram')
+
+        logger.info(f"Creating {duration}s {content_type} content for {platform} with {len(segments)} segments")
+
+        # DEBUG: Log the actual segments received
+        for i, seg in enumerate(segments, 1):
+            logger.info(f"  Segment {i}: {seg.get('start', 'N/A')}s - {seg.get('end', 'N/A')}s ({seg.get('duration', 'N/A')}s)")
+
+        # Convert segments to time ranges for _keep_only_time_ranges
+        ranges_to_keep = []
+        for segment in segments:
+            # Validate segment has required timing fields
+            # Use 'is None' check instead of 'or' to allow start=0.0
+            start_time = segment.get('start')
+            if start_time is None:
+                start_time = segment.get('start_time')
+
+            end_time = segment.get('end')
+            if end_time is None:
+                end_time = segment.get('end_time')
+
+            if start_time is None or end_time is None:
+                logger.warning(f"Skipping segment with missing time data: {segment}")
+                continue
+
+            ranges_to_keep.append({
+                'start': start_time,
+                'end': end_time,
+                'text': segment.get('text', ''),
+                'reason': segment.get('reason', ''),
+                'engagement_score': segment.get('engagement_score', 0.5)
+            })
+
+        if not ranges_to_keep:
+            return {
+                'success': False,
+                'operation': 'short_form',
+                'message': "No valid segments found for short-form content",
+                'timeline': timeline,
+                'changes_made': {'clips_created': 0}
+            }
+
+        # Create new timeline with only selected segments
+        edited_timeline = self._keep_only_time_ranges(timeline, ranges_to_keep)
+
+        # Calculate stats
+        total_duration = sum(r['end'] - r['start'] for r in ranges_to_keep)
+        original_duration = timeline.duration if timeline.duration else 0
+        compression_ratio = (1 - (total_duration / original_duration)) * 100 if original_duration > 0 else 0
+
+        return {
+            'success': True,
+            'operation': 'short_form',
+            'message': f"Created {total_duration:.1f}s {platform} reel with {len(segments)} engaging segments ({content_type} style)",
+            'timeline': edited_timeline,
+            'changes_made': {
+                'clips_created': len(segments),
+                'total_duration': total_duration,
+                'original_duration': original_duration,
+                'compression_ratio': compression_ratio,
+                'platform': platform,
+                'content_type': content_type,
+                'segments': ranges_to_keep
             }
         }
