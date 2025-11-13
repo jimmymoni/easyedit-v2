@@ -191,7 +191,11 @@ class EditRulesEngine:
                 # Find speaker changes within this clip
                 clip_speaker_segments = []
                 for segment in speaker_segments:
-                    if not (segment['end_time'] <= clip.start_time or segment['start_time'] >= clip.end_time):
+                    # Handle both 'end_time' and 'end' keys (different transcription providers use different schemas)
+                    segment_end = segment.get('end_time', segment.get('end', 0))
+                    segment_start = segment.get('start_time', segment.get('start', 0))
+
+                    if not (segment_end <= clip.start_time or segment_start >= clip.end_time):
                         clip_speaker_segments.append(segment)
 
                 if len(clip_speaker_segments) <= 1:
@@ -201,8 +205,12 @@ class EditRulesEngine:
                 # Split clip based on speaker segments
                 current_start = clip.start_time
                 for i, segment in enumerate(clip_speaker_segments):
-                    segment_start = max(segment['start_time'], clip.start_time)
-                    segment_end = min(segment['end_time'], clip.end_time)
+                    # Handle both 'start_time'/'end_time' and 'start'/'end' keys
+                    seg_start = segment.get('start_time', segment.get('start', 0))
+                    seg_end = segment.get('end_time', segment.get('end', 0))
+
+                    segment_start = max(seg_start, clip.start_time)
+                    segment_end = min(seg_end, clip.end_time)
 
                     if segment_start > current_start:
                         current_start = segment_start
@@ -379,8 +387,10 @@ class EditRulesEngine:
         for segment in segments:
             speaker = segment.get('speaker')
             if speaker != current_speaker and current_speaker is not None:
+                # Handle both 'start_time' and 'start' keys
+                segment_start = segment.get('start_time', segment.get('start', 0))
                 timeline.add_marker(
-                    time=segment['start_time'],
+                    time=segment_start,
                     name=f"Speaker Change: {speaker}",
                     color="Blue"
                 )

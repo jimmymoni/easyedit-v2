@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import * as api from '../../services/api';
+import { GodLoadingIndicator } from './GodLoadingIndicator';
+import { ContentAnalysis } from '../../types';
 
 interface Message {
   id: string;
@@ -21,18 +23,58 @@ interface AIOption {
 interface ChatInterfaceProps {
   jobId: string;
   onEditExecuted: (result: any) => void;
+  contentAnalysis?: ContentAnalysis | null;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ jobId, onEditExecuted }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ jobId, onEditExecuted, contentAnalysis }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [selectedOption, setSelectedOption] = useState<AIOption | null>(null);
   const [previewData, setPreviewData] = useState<any>(null);
+  const [isLoadingGreeting, setIsLoadingGreeting] = useState(true);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch intelligent greeting on mount
+  useEffect(() => {
+    const fetchGreeting = async () => {
+      try {
+        setIsLoadingGreeting(true);
+        const greetingData = await api.getIntelligentGreeting(jobId);
+
+        // Add greeting as first message from God
+        const greetingMessage: Message = {
+          id: 'greeting',
+          sender: 'god',
+          text: greetingData.greeting,
+          timestamp: new Date(),
+          options: greetingData.options || [],
+        };
+
+        setMessages([greetingMessage]);
+      } catch (error: any) {
+        console.error('Failed to load intelligent greeting:', error);
+
+        // Fallback to generic greeting
+        const fallbackMessage: Message = {
+          id: 'greeting-fallback',
+          sender: 'god',
+          text: '👋 How can I help you edit this timeline?\n\nI can help you:\n• Create **Instagram Reels / TikTok** videos\n• Make **montages** of specific phrases\n• Remove **silence** and long pauses\n• Filter by **speaker**\n\nWhat would you like to do?',
+          timestamp: new Date(),
+          options: [],
+        };
+
+        setMessages([fallbackMessage]);
+      } finally {
+        setIsLoadingGreeting(false);
+      }
+    };
+
+    fetchGreeting();
+  }, [jobId]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -91,7 +133,57 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ jobId, onEditExecuted }) 
 
     setSelectedOption(option);
 
-    // Get preview
+    // Check if this is a repurposing option (from intelligent greeting)
+    const action = (option.params as any).action;
+    if (action === 'apply_repurposing') {
+      // Execute repurposing directly without preview
+      setIsExecuting(true);
+
+      try {
+        // Add user selection message
+        const userMessage: Message = {
+          id: Date.now().toString(),
+          sender: 'user',
+          text: `Apply: ${option.label}`,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, userMessage]);
+
+        // Execute the repurposing
+        const result = await api.submitAIEdit(jobId, 'Apply repurposing option', option.params);
+
+        const confirmMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          sender: 'god',
+          text: `✅ ${result.message || 'Repurposing completed successfully!'}`,
+          timestamp: new Date(),
+        };
+
+        setMessages(prev => [...prev, confirmMessage]);
+
+        // Notify parent component
+        onEditExecuted(result);
+
+        // Reset state
+        setSelectedOption(null);
+        setPreviewData(null);
+      } catch (error: any) {
+        const errorMessage: Message = {
+          id: Date.now().toString(),
+          sender: 'god',
+          text: `❌ ${error.response?.data?.error || 'Repurposing failed'}`,
+          timestamp: new Date(),
+        };
+
+        setMessages(prev => [...prev, errorMessage]);
+      } finally {
+        setIsExecuting(false);
+      }
+
+      return;
+    }
+
+    // Standard flow: Get preview for other options
     try {
       setIsThinking(true);
       const response = await api.getAIPreview(jobId, option.params);
@@ -125,8 +217,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ jobId, onEditExecuted }) 
     setIsExecuting(true);
 
     try {
-      // Execute AI edit using the prompt from selected option
-      const result = await api.submitAIEdit(jobId, selectedOption.params.prompt);
+      // Execute AI edit using the prompt and full params from selected option
+      const result = await api.submitAIEdit(jobId, selectedOption.params.prompt, selectedOption.params);
 
       const confirmMessage: Message = {
         id: Date.now().toString(),
@@ -192,11 +284,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ jobId, onEditExecuted }) 
 
       {/* Messages Container */}
       <div className="p-6 h-[400px] overflow-y-auto space-y-4 bg-[#0A0A0A] chat-messages">
-        {messages.length === 0 && (
+        {messages.length === 0 && isLoadingGreeting && (
           <div className="text-center py-8">
-            <div className="text-4xl mb-3">💬</div>
+            <Loader2 className="h-8 w-8 animate-spin text-[#FF6B35] mx-auto mb-3" />
             <p className="text-[#EAEAEA]/70 text-sm">
-              Tell me what you want to do with your timeline
+              Analyzing your content...
             </p>
           </div>
         )}
@@ -253,13 +345,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ jobId, onEditExecuted }) 
         ))}
 
         {isThinking && (
-          <div className="flex justify-start">
-            <div className="bg-[#181818] border border-[#2A2A2A] rounded-xl px-4 py-3">
-              <div className="flex items-center space-x-2 text-[#FF6B35]">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">God is thinking...</span>
-              </div>
-            </div>
+          <div className="flex justify-center w-full">
+            <GodLoadingIndicator />
           </div>
         )}
 

@@ -216,10 +216,11 @@ export const triggerCleanup = async (): Promise<{ message: string }> => {
 };
 
 // God Mode - AI Edit API
-export const submitAIEdit = async (jobId: string, prompt: string): Promise<any> => {
+export const submitAIEdit = async (jobId: string, prompt: string, params?: Record<string, any>): Promise<any> => {
   const response = await api.post('/ai-edit', {
     job_id: jobId,
     prompt: prompt,
+    params: params,
   });
   return response.data;
 };
@@ -241,6 +242,25 @@ export const sendChatMessage = async (jobId: string, message: string): Promise<a
   const response = await api.post('/ai-chat', {
     job_id: jobId,
     message: message,
+  });
+  return response.data;
+};
+
+// God Mode - Intelligent Greeting API
+export const getIntelligentGreeting = async (jobId: string): Promise<any> => {
+  const response = await api.get(`/ai-greeting/${jobId}`);
+  return response.data;
+};
+
+// God Mode - Knowledge Base API
+export const getKnowledgeBase = async (jobId: string): Promise<any> => {
+  const response = await api.get(`/knowledge-base/${jobId}`);
+  return response.data;
+};
+
+export const updateKnowledgeBase = async (jobId: string, contentAnalysis: any): Promise<any> => {
+  const response = await api.put(`/knowledge-base/${jobId}`, {
+    content_analysis: contentAnalysis,
   });
   return response.data;
 };

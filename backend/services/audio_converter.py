@@ -1,5 +1,5 @@
 """
-Audio format converter utility using pydub.
+Audio format converter utility using ffmpeg subprocess (Python 3.13 compatible).
 Converts various audio formats (MP3, M4A, AAC, FLAC) to WAV for processing.
 Requires ffmpeg to be installed on the system.
 
@@ -9,6 +9,7 @@ SECURITY HARDENED VERSION with:
 - Proper cleanup with temp files
 - Thread-safe singleton pattern
 - Concurrent conversion limits
+- Direct ffmpeg subprocess calls (no pydub dependency)
 """
 
 import os
@@ -17,12 +18,11 @@ import shutil
 import tempfile
 import threading
 import time
+import subprocess
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 from collections import defaultdict
 from werkzeug.utils import secure_filename
-from pydub import AudioSegment
-from pydub.exceptions import CouldntDecodeError
 
 logger = logging.getLogger(__name__)
 
@@ -231,43 +231,64 @@ class AudioFormatConverter:
             temp_fd, temp_output = tempfile.mkstemp(suffix='.wav', dir=self.temp_folder)
             os.close(temp_fd)  # Close file descriptor to avoid leaks
 
-            # Special handling for M4A (often AAC codec)
-            format_for_pydub = 'mp4' if input_format == 'm4a' else input_format
-
             # Calculate timeout based on file size (1 minute per 10MB, min 30s, max 5 minutes)
             timeout_seconds = max(30, min(self.CONVERSION_TIMEOUT_SECONDS, int(file_size_mb * 6)))
 
-            logger.info(f"Converting {input_format.upper()} to WAV: {input_path} (timeout: {timeout_seconds}s)")
+            logger.info(f"Converting {input_format.upper()} to WAV using ffmpeg: {input_path} (timeout: {timeout_seconds}s)")
 
-            # Load audio file with error handling
+            # Use ffmpeg subprocess for conversion (Python 3.13 compatible, no pydub needed)
             try:
-                audio = AudioSegment.from_file(input_path, format=format_for_pydub)
-            except CouldntDecodeError as e:
+                # Build ffmpeg command
+                # -i input_file: input file
+                # -acodec pcm_s16le: 16-bit PCM audio codec
+                # -ar 44100: sample rate 44.1kHz
+                # -ac 2: stereo (2 channels)
+                # -y: overwrite output file
+                cmd = [
+                    'ffmpeg',
+                    '-i', input_path,
+                    '-acodec', 'pcm_s16le',  # 16-bit PCM
+                    '-ar', '44100',          # 44.1kHz sample rate
+                    '-ac', '2',              # Stereo
+                    '-y',                    # Overwrite output
+                    temp_output
+                ]
+
+                # Run ffmpeg with timeout
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    check=False  # Don't raise exception, check returncode manually
+                )
+
+                if result.returncode != 0:
+                    self.metrics['conversions_failed'] += 1
+                    self.metrics['errors_by_type']['decoding_error'] += 1
+                    if temp_output and os.path.exists(temp_output):
+                        os.remove(temp_output)
+                    error_msg = result.stderr if result.stderr else "Unknown ffmpeg error"
+                    return False, None, f"Could not decode {input_format.upper()} file. Error: {error_msg[:200]}"
+
+            except subprocess.TimeoutExpired:
                 self.metrics['conversions_failed'] += 1
-                self.metrics['errors_by_type']['decoding_error'] += 1
+                self.metrics['errors_by_type']['timeout'] += 1
                 if temp_output and os.path.exists(temp_output):
                     os.remove(temp_output)
-                return False, None, f"Could not decode {input_format.upper()} file. Ensure ffmpeg is installed. Error: {str(e)}"
-
-            # Validate audio properties
-            if len(audio) == 0:
+                return False, None, f"Conversion timed out after {timeout_seconds}s"
+            except FileNotFoundError:
                 self.metrics['conversions_failed'] += 1
+                self.metrics['errors_by_type']['ffmpeg_missing'] += 1
                 if temp_output and os.path.exists(temp_output):
                     os.remove(temp_output)
-                return False, None, "Audio file has zero duration"
-
-            if audio.channels == 0:
+                return False, None, "ffmpeg not found. Please install ffmpeg to convert audio files."
+            except Exception as e:
                 self.metrics['conversions_failed'] += 1
+                self.metrics['errors_by_type']['unknown'] += 1
                 if temp_output and os.path.exists(temp_output):
                     os.remove(temp_output)
-                return False, None, "Audio file has no channels"
-
-            # Convert to WAV with standard settings
-            audio.export(
-                temp_output,
-                format='wav',
-                parameters=["-acodec", "pcm_s16le"]  # 16-bit PCM
-            )
+                return False, None, f"Unexpected error during conversion: {str(e)}"
 
             # Verify the output file was created and is valid
             if not os.path.exists(temp_output):

@@ -1,10 +1,12 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Zap, AudioWaveform, FileText } from 'lucide-react';
-import EnhancedWaveformViewer from '../components/godmode/EnhancedWaveformViewer';
+import EnhancedWaveformViewer, { WaveformViewerHandle } from '../components/godmode/EnhancedWaveformViewer';
 import TranscriptionViewer from '../components/godmode/TranscriptionViewer';
 import ChatInterface from '../components/godmode/ChatInterface';
 import TimelineControls from '../components/godmode/TimelineControls';
+import KnowledgeBaseEditor from '../components/godmode/KnowledgeBaseEditor';
+import { ContentAnalysis } from '../types';
 import * as api from '../services/api';
 
 type TabType = 'waveform' | 'transcription';
@@ -21,7 +23,36 @@ const GodModePage: React.FC = () => {
   const [currentPlaybackTime, setCurrentPlaybackTime] = useState(0); // NEW: Track playback position for karaoke highlighting
   const [autoSwitchToEdited, setAutoSwitchToEdited] = useState(false); // Auto-switch waveform after AI edit
   const [isEditedMode, setIsEditedMode] = useState(false); // NEW: Track whether viewing edited audio
+  const [contentAnalysis, setContentAnalysis] = useState<ContentAnalysis | null>(null);
+  const [kbLoading, setKbLoading] = useState(true);
   const waveformSeekRef = useRef<((time: number) => void) | null>(null);
+  const waveformViewerRef = useRef<WaveformViewerHandle>(null);
+
+  // Load knowledge base on mount
+  useEffect(() => {
+    const loadKnowledgeBase = async () => {
+      if (!jobId) return;
+
+      try {
+        setKbLoading(true);
+        const response = await api.getKnowledgeBase(jobId);
+        if (response.content_analysis) {
+          setContentAnalysis(response.content_analysis);
+        }
+      } catch (error) {
+        console.error('Failed to load knowledge base:', error);
+        // Knowledge base is optional - don't show error to user
+      } finally {
+        setKbLoading(false);
+      }
+    };
+
+    loadKnowledgeBase();
+  }, [jobId]);
+
+  const handleKnowledgeBaseUpdate = (updated: ContentAnalysis) => {
+    setContentAnalysis(updated);
+  };
 
   const handleEditExecuted = (result: any) => {
     setEditMessage(result.message || 'Edit completed successfully!');
@@ -29,6 +60,11 @@ const GodModePage: React.FC = () => {
 
     // Trigger auto-switch to edited view
     setAutoSwitchToEdited(true);
+
+    // Force reload comparison data after AI edit completes
+    setTimeout(() => {
+      waveformViewerRef.current?.reloadComparison();
+    }, 500);
 
     // Switch to waveform tab to see the changes
     setActiveTab('waveform');
@@ -119,6 +155,7 @@ const GodModePage: React.FC = () => {
           <>
             <div style={{ display: activeTab === 'waveform' ? 'block' : 'none' }}>
               <EnhancedWaveformViewer
+                ref={waveformViewerRef}
                 jobId={jobId}
                 audioUrl={audioUrl}
                 onSeekReady={(seekFn) => {
@@ -161,8 +198,17 @@ const GodModePage: React.FC = () => {
           </div>
         )}
 
+        {/* Knowledge Base Editor */}
+        {jobId && !kbLoading && contentAnalysis && (
+          <KnowledgeBaseEditor
+            jobId={jobId}
+            contentAnalysis={contentAnalysis}
+            onUpdate={handleKnowledgeBaseUpdate}
+          />
+        )}
+
         {/* Chat with God */}
-        {jobId && <ChatInterface jobId={jobId} onEditExecuted={handleEditExecuted} />}
+        {jobId && <ChatInterface jobId={jobId} onEditExecuted={handleEditExecuted} contentAnalysis={contentAnalysis} />}
 
         {/* Timeline Controls */}
         <TimelineControls onExport={handleExport} isExporting={isExporting} />

@@ -63,10 +63,15 @@ class AITimelineEditor:
             elif operation == 'summarize':
                 target_duration = self._extract_target_duration(prompt)
                 result = self._create_summary(timeline, target_duration)
+            elif operation == 'feature_extraction':
+                start_time = params.get('start_time', 0)
+                end_time = params.get('end_time', 0)
+                feature_name = params.get('feature_name', 'feature')
+                result = self._extract_feature(timeline, start_time, end_time, feature_name)
             else:
                 result = {
                     'success': False,
-                    'message': f"Operation '{operation}' not yet supported. Try: short-form reel, montage, remove silence, filter speaker, remove fillers, or summarize.",
+                    'message': f"Operation '{operation}' not yet supported. Try: short-form reel, montage, remove silence, filter speaker, remove fillers, summarize, or feature extraction.",
                     'timeline': timeline
                 }
 
@@ -600,5 +605,62 @@ class AITimelineEditor:
                 'platform': platform,
                 'content_type': content_type,
                 'segments': ranges_to_keep
+            }
+        }
+
+    def _extract_feature(self, timeline: Timeline, start_time: float, end_time: float, feature_name: str) -> dict:
+        """
+        Extract a specific feature/section from timeline based on timestamps
+
+        Args:
+            timeline: Original timeline
+            start_time: Start time in seconds
+            end_time: End time in seconds
+            feature_name: Name of the feature being extracted
+
+        Returns:
+            dict: Result with success status, message, and edited timeline
+        """
+        logger.info(f"Extracting feature '{feature_name}' from {start_time}s to {end_time}s")
+
+        if not timeline.tracks:
+            return {
+                'success': False,
+                'operation': 'feature_extraction',
+                'message': "No tracks found in timeline",
+                'timeline': timeline,
+                'changes_made': {}
+            }
+
+        if start_time >= end_time:
+            return {
+                'success': False,
+                'operation': 'feature_extraction',
+                'message': f"Invalid time range: start ({start_time}s) must be before end ({end_time}s)",
+                'timeline': timeline,
+                'changes_made': {}
+            }
+
+        # Extract the time range
+        ranges_to_keep = [{'start': start_time, 'end': end_time}]
+        edited_timeline = self._keep_only_time_ranges(timeline, ranges_to_keep)
+
+        # Calculate stats
+        duration = end_time - start_time
+        original_duration = timeline.duration if timeline.duration else 0
+        compression_ratio = (1 - (duration / original_duration)) * 100 if original_duration > 0 else 0
+
+        return {
+            'success': True,
+            'operation': 'feature_extraction',
+            'message': f"Extracted '{feature_name}' segment ({duration:.1f}s from {start_time:.1f}s to {end_time:.1f}s)",
+            'timeline': edited_timeline,
+            'changes_made': {
+                'feature_name': feature_name,
+                'start_time': start_time,
+                'end_time': end_time,
+                'duration': duration,
+                'original_duration': original_duration,
+                'compression_ratio': compression_ratio
             }
         }

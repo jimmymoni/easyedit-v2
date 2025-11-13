@@ -10,9 +10,7 @@ This is **easyedit-v2**, a platform that automates timeline edits based on sourc
 
 ### Backend (Flask + Python 3.13)
 - **API**: Flask REST API with JWT authentication
-- **Transcription**:
-  - **PRIMARY**: Replicate Whisper (incredibly-fast-whisper + pyannote diarization) - $0.078/hour
-  - **BACKUP**: Google Cloud Speech-to-Text V1 - $1.62/hour (enterprise fallback)
+- **Transcription**: Replicate Whisper (incredibly-fast-whisper + pyannote diarization) - $0.078/hour
 - **AI Enhancement**: OpenAI GPT-4 (transcript improvement, highlights, summaries, chapters)
 - **Audio Processing**: Scipy-based SimpleAudioAnalyzer (energy detection, silence removal, optimal cut points)
 - **Task Queue**: Celery with Redis (async job processing)
@@ -27,9 +25,17 @@ This is **easyedit-v2**, a platform that automates timeline edits based on sourc
 - **Design System**: Professional dark UI with orange brand identity (#FF6B35)
 
 ### Key Workflow
-  1. Receive `POST /upload` with `audio` and optional `drt` files
+
+**REQUIRED INPUTS:**
+- ⚠️ **Audio file** (WAV, MP3, M4A, AAC, or FLAC) - **MANDATORY**
+- ⚠️ **DaVinci Resolve timeline file** (.drt or .xml) - **MANDATORY**
+
+**Both files must be uploaded together.** This application **edits existing timelines**, it does **not** generate new timelines from audio alone.
+
+**Processing Steps:**
+  1. Receive `POST /upload` with **both** `audio` and `drt` files (BOTH REQUIRED)
   2. Transcribe audio with Replicate Whisper (speaker diarization)
-  3. Parse `.drt` XML to extract segment timings (if provided)
+  3. Parse `.drt` XML to extract existing timeline structure and segment timings
   4. Analyze audio for silence, speech segments, optimal cut points
   5. Apply AI enhancement (OpenAI) for highlights, summaries, chapters
   6. Apply intelligent editing rules to timeline data
@@ -656,6 +662,7 @@ LOG_LEVEL=INFO
   - ✅ `frontend/src/components/godmode/EnhancedWaveformViewer.tsx` (audio switching)
   - ✅ `backend/Dockerfile` (Python 3.13 + ffmpeg/ffprobe)
 - **User Concern Addressed**: Audio and XML now properly rearrange based on AI prompts
+  - **Note**: Both audio file and DRT XML are required inputs for processing
   - Timeline clips extracted and concatenated into new audio file
   - Edited DRT XML reflects only the montage segments
   - Frontend can toggle between original and edited waveforms
@@ -679,7 +686,7 @@ LOG_LEVEL=INFO
 - ✅ System checks for ffmpeg with graceful degradation
 
 ### Priority 1: UI/UX Enhancements 🎨
-- Separate upload zones for audio and timeline files
+- ✅ Separate upload zones for audio and timeline files (COMPLETED Session 1)
 - Add processing time estimates (elapsed + remaining + ETA)
 - Video editor-friendly interface improvements
 - Use Shadcn UI for modern component library
@@ -806,10 +813,96 @@ Follow these components as examples:
 - File: `backend/services/simple_audio_analyzer.py`
 - Features: Energy detection, silence removal, optimal cut points, RMS analysis
 
-### God Mode AI Editor
-- **AITimelineEditor** for natural language timeline manipulation
-- File: `backend/services/ai_editor.py`
-- Features: Montage creation, silence removal, speaker filtering, filler removal
+### God Mode AI Editor - Complete Reference
+
+**God Mode** is the AI-powered conversational timeline editor that lets users refine timelines using natural language instead of manual scrubbing.
+
+#### Core Components
+- **AI Chat Handler**: `backend/services/ai_chat_handler.py` - Intent detection with GPT-4
+- **AI Timeline Editor**: `backend/services/ai_editor.py` - Timeline transformation logic
+- **Audio Extractor**: `backend/services/audio_extractor.py` - Real audio segment extraction (FFmpeg)
+- **System Prompt**: `backend/system_prompts/godmode_adaptive.txt` - 119 lines of AI behavior rules
+
+#### Supported Commands
+
+1. **Short-Form Content** (Instagram Reels, TikTok, YouTube Shorts) - **PRIMARY FEATURE**
+   - "make a compact and precise cut for an instagram reel"
+   - "create a 60 second TikTok video from this"
+   - Uses GPT-4 to analyze transcript for 3-5 high-engagement segments
+   - Total duration: 30-90s depending on platform
+   - Requires: Transcription data + OpenAI API key
+
+2. **Montage Creation** (phrase compilation)
+   - "make a montage of 'money in the bank'"
+   - "compile all instances of 'Shopify'"
+   - 3 cut modes: tight (0s padding), normal (0.1s), loose (0.5s)
+   - Requires: Transcription with word-level timing
+
+3. **Filler Word Removal**
+   - "remove filler words"
+   - "cut out all the 'um' and 'uh'"
+   - Detects: um, uh, like, you know, so, actually, basically, literally
+   - Requires: Word-level transcription
+
+4. **Silence Removal**
+   - "remove silence longer than 2 seconds"
+   - Requires: Audio analysis data (no transcription needed)
+
+5. **Speaker Filtering**
+   - "keep only Speaker 1"
+   - "remove Speaker 2 entirely"
+   - Requires: Speaker diarization enabled
+
+#### God Mode API Endpoints
+
+- `POST /ai-chat` - Send natural language message, get options back
+- `POST /ai-preview` - Preview what will be cut before executing
+- `POST /ai-edit` - Execute the AI edit (creates new timeline + audio)
+- `GET /timeline-comparison/<job_id>` - Get diff between original and edited timelines
+- `GET /audio/<job_id>/edited` - Serve edited audio file for waveform playback
+
+#### Workflow
+
+```
+User types message → GPT-4 analyzes intent → Returns options →
+User clicks option → Preview shown → User confirms →
+Timeline edited → Audio extracted (FFmpeg) → DRT XML generated →
+Waveform viewer displays edited audio
+```
+
+#### Intent Detection System
+
+God Mode uses GPT-4 to semantically analyze user requests and infer editing intent:
+- **short_form**: Instagram/TikTok/YouTube Shorts (30-90s)
+- **highlight**: Best moments extraction
+- **montage**: Compile all instances of a phrase
+- **remove_silence**: Cut long pauses
+- **filter_speaker**: Keep/remove specific speakers
+- **narrative**: Documentary-style editing
+- **viral**: Hook-optimized, shareable content
+
+Returns structured JSON with: intent, confidence (0.0-1.0), duration, platform, reasoning
+
+#### Data Dependencies
+
+- **Required for God Mode**: Completed job (status: "completed")
+- **Required for short-form/montage/speaker filter**: Transcription data
+- **Optional**: Audio analysis data (for silence removal)
+
+#### Audio Extraction Details
+
+- Uses FFmpeg subprocess for segment extraction and concatenation
+- Output format: WAV (PCM 16-bit, 44.1kHz)
+- No crossfades (simple concatenation)
+- Automatic cleanup of temporary segment files
+- Duration tracking and compression percentage logging
+
+#### Limitations
+
+- Transcription truncated to 4000 chars for GPT-4 analysis (long files may miss segments)
+- English-only filler detection (hardcoded list)
+- No speaker name filtering (only numbers: Speaker 0, Speaker 1, etc.)
+- Requires OpenAI API key for short-form content (falls back to sequential extraction)
 
 ### Audio Extraction
 - **AudioExtractor** for real audio segment extraction

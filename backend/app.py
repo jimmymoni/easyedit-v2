@@ -19,6 +19,7 @@ except ImportError:
     from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
 from services.edit_rules import EditRulesEngine
 from services.ai_enhancer import AIEnhancementService
+from services.content_analyzer import ContentAnalyzer
 
 # Import production utilities
 from utils import (
@@ -46,7 +47,7 @@ app.config.from_object(Config)
 Config.init_app(app)
 
 # Enable CORS for frontend integration
-CORS(app, origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:5173"])
+CORS(app, origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5173"])
 
 # Setup production features
 setup_error_handlers(app)
@@ -732,6 +733,7 @@ def ai_edit_timeline():
         data = validate_json_request(request)
         job_id = validate_job_id(data.get('job_id'))
         prompt = data.get('prompt', '').strip()
+        params = data.get('params')  # Get params from AI chat handler
 
         if not prompt:
             return jsonify({"error": "Prompt is required"}), 400
@@ -768,15 +770,18 @@ def ai_edit_timeline():
         # Load transcription data if available
         transcription_data = job_status.get("result", {}).get("transcription")
 
-        # Process with AI editor
+        # Process with AI editor (pass params for short-form and other operations)
         editor = AITimelineEditor()
-        result = editor.process_prompt(prompt, timeline, transcription_data)
+        result = editor.process_prompt(prompt, timeline, transcription_data, params)
 
         if not result.get('success'):
+            error_message = result.get('message', 'AI edit failed')
+            logger.error(f"AI edit failed for job {job_id}: {error_message}")
+            logger.error(f"Params received: {params}")
             return jsonify({
                 "job_id": job_id,
                 "success": False,
-                "message": result.get('message', 'AI edit failed'),
+                "message": error_message,
                 "prompt": prompt
             }), 400
 
@@ -804,7 +809,7 @@ def ai_edit_timeline():
 
             # Update job status with new edited timeline path and audio path
             if isinstance(job_status.get("result"), dict):
-                job_status["result"]["output_file"] = output_path
+                job_status["result"]["ai_edited_output_file"] = output_path  # Store AI edited timeline separately
                 if audio_generated:
                     job_status["result"]["edited_audio_file"] = edited_audio_path
                     logger.info(f"Generated edited audio: {edited_audio_path}")
@@ -900,6 +905,205 @@ def ai_chat():
         return jsonify({"error": f"AI chat failed: {str(e)}"}), 500
 
 
+@app.route('/ai-greeting/<job_id>', methods=['GET'])
+@require_auth()
+@error_handler
+def ai_get_intelligent_greeting(job_id):
+    """Get intelligent greeting with content analysis-based suggestions"""
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        if job_status.get("status") != "completed":
+            return jsonify({"error": "Job must be completed before accessing God Mode"}), 400
+
+        # Get content analysis if available
+        result = job_status.get("result", {})
+        content_analysis = result.get("content_analysis")
+
+        # Generate intelligent greeting
+        from services.ai_chat_handler import AIChatHandler
+        chat_handler = AIChatHandler()
+        greeting_response = chat_handler.get_intelligent_greeting(content_analysis)
+
+        logger.info(f"Generated intelligent greeting for job {job_id}: {bool(content_analysis)} analysis available")
+
+        return jsonify({
+            "job_id": job_id,
+            "greeting": greeting_response.get('message'),
+            "needs_confirmation": greeting_response.get('needs_confirmation', False),
+            "options": greeting_response.get('options', []),
+            "has_analysis": bool(content_analysis)
+        })
+
+    except Exception as e:
+        logger.error(f"Error generating greeting: {str(e)}")
+        return jsonify({"error": f"Greeting generation failed: {str(e)}"}), 500
+
+
+@app.route('/knowledge-base/<job_id>', methods=['GET'])
+@require_auth()
+@error_handler
+def get_knowledge_base(job_id):
+    """Get knowledge base for a completed job"""
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        # Get content analysis
+        result = job_status.get("result", {})
+        content_analysis = result.get("content_analysis", {})
+
+        return jsonify({
+            "job_id": job_id,
+            "content_analysis": content_analysis
+        })
+
+    except Exception as e:
+        logger.error(f"Error retrieving knowledge base: {str(e)}")
+        return jsonify({"error": f"Failed to retrieve knowledge base: {str(e)}"}), 500
+
+
+@app.route('/knowledge-base/<job_id>', methods=['PUT'])
+@require_auth()
+@error_handler
+def update_knowledge_base(job_id):
+    """Update knowledge base with user edits"""
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        # Validate request
+        data = validate_json_request(request)
+        updated_kb = data.get('content_analysis')
+
+        if not updated_kb:
+            return jsonify({"error": "content_analysis is required"}), 400
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        # Mark as user-modified
+        from datetime import datetime
+        if 'metadata' not in updated_kb:
+            updated_kb['metadata'] = {}
+        updated_kb['metadata']['user_modified'] = True
+        updated_kb['metadata']['last_edited'] = datetime.utcnow().isoformat()
+
+        # Update job result
+        if 'result' not in job_status:
+            job_status['result'] = {}
+        job_status['result']['content_analysis'] = updated_kb
+
+        # Persist changes
+        job_manager.update_job_status(
+            job_id=job_id,
+            status=job_status.get("status", "completed"),
+            result=job_status['result']
+        )
+
+        logger.info(f"Knowledge base updated for job {job_id} by user")
+
+        return jsonify({
+            "success": True,
+            "message": "Knowledge base updated successfully",
+            "content_analysis": updated_kb
+        })
+
+    except Exception as e:
+        logger.error(f"Error updating knowledge base: {str(e)}")
+        return jsonify({"error": f"Failed to update knowledge base: {str(e)}"}), 500
+
+
+@app.route('/re-analyze/<job_id>', methods=['POST'])
+@require_auth()
+@error_handler
+def re_analyze_job(job_id):
+    """Manually re-run content analysis on a completed job"""
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                return jsonify({"error": "Job not found"}), 404
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            return jsonify({"error": "Job not found"}), 404
+
+        # Check if job is completed
+        if job_status.get("status") != "completed":
+            return jsonify({"error": "Job must be completed before re-analysis"}), 400
+
+        # Get transcription data
+        result = job_status.get("result", {})
+        transcription_data = result.get("transcription")
+
+        if not transcription_data:
+            return jsonify({"error": "No transcription data available for analysis"}), 400
+
+        # Run content analysis
+        from services.content_analyzer import ContentAnalyzer
+        analyzer = ContentAnalyzer()
+
+        logger.info(f"Re-analyzing content for job {job_id}")
+        content_analysis = analyzer.analyze_content(transcription_data)
+
+        # Update job result with new content_analysis
+        result['content_analysis'] = content_analysis
+        job_manager.update_job_status(job_id, job_status['status'], result)
+
+        logger.info(f"Re-analysis complete for job {job_id}: {content_analysis.get('main_topic', 'Unknown')}")
+
+        return jsonify({
+            "success": True,
+            "message": "Content analysis updated successfully",
+            "content_analysis": content_analysis
+        })
+
+    except Exception as e:
+        logger.error(f"Error re-analyzing job: {str(e)}")
+        return jsonify({"error": f"Re-analysis failed: {str(e)}"}), 500
+
+
 @app.route('/ai-preview', methods=['POST'])
 @require_auth()
 @error_handler
@@ -961,6 +1165,101 @@ def ai_preview():
         return jsonify({"error": f"Preview generation failed: {str(e)}"}), 500
 
 
+@app.route('/auto-analyze/<job_id>', methods=['POST'])
+@require_auth()
+@error_handler
+def auto_analyze_content(job_id):
+    """
+    Automatically analyze completed job content and generate intelligent repurposing options.
+    This is the proactive God Mode feature that suggests edits based on content type detection.
+    """
+    try:
+        # Validate job ID
+        job_id = validate_job_id(job_id)
+
+        # Get job status
+        try:
+            job_status = job_manager.get_job_status(job_id)
+            if not job_status:
+                if job_id not in processing_jobs:
+                    return jsonify({"error": "Job not found"}), 404
+                job_status = processing_jobs[job_id]
+        except Exception as e:
+            logger.error(f"Failed to get job status: {str(e)}")
+            if job_id not in processing_jobs:
+                return jsonify({"error": "Job not found"}), 404
+            job_status = processing_jobs[job_id]
+
+        # Only analyze completed jobs
+        if job_status.get("status") != "completed":
+            return jsonify({"error": "Job must be completed before auto-analysis"}), 400
+
+        # Get transcription and audio analysis data
+        result = job_status.get("result", {})
+        transcription_data = result.get("transcription")
+        audio_analysis = result.get("audio_analysis")
+
+        if not transcription_data:
+            return jsonify({
+                "error": "Transcription data required for content analysis",
+                "recommendation": "Enable transcription when processing to use auto-analysis"
+            }), 400
+
+        # Initialize content analyzer
+        analyzer = ContentAnalyzer()
+
+        # Run content analysis
+        logger.info(f"Running auto-analysis for job {job_id}")
+        analysis_result = analyzer.analyze_content(
+            transcription_data=transcription_data,
+            audio_analysis_data=audio_analysis
+        )
+
+        # Store analysis in job metadata
+        if "content_analysis" not in result:
+            result["content_analysis"] = {}
+
+        result["content_analysis"] = {
+            "analyzed_at": datetime.now().isoformat(),
+            "content_type": analysis_result.get("content_type"),
+            "key_moments": analysis_result.get("key_moments", []),
+            "repurposing_options": analysis_result.get("repurposing_options", []),
+            "stats": analysis_result.get("stats", {}),
+            "quality_score": analysis_result.get("quality_score", 0.0)
+        }
+
+        # Update job status with analysis using store_task_result
+        job_manager.store_task_result(job_id, result)
+
+        content_type = analysis_result.get('content_type', {})
+        primary_type = content_type.get('primary_type', 'unknown') if isinstance(content_type, dict) else content_type
+
+        logger.info(
+            f"Auto-analysis complete for job {job_id}: "
+            f"{primary_type} content, "
+            f"{len(analysis_result.get('repurposing_options', []))} options generated"
+        )
+
+        return jsonify({
+            "job_id": job_id,
+            "status": "analyzed",
+            "analysis": {
+                "content_type": analysis_result.get("content_type"),
+                "key_moments_count": len(analysis_result.get("key_moments", [])),
+                "repurposing_options": analysis_result.get("repurposing_options", []),
+                "stats": analysis_result.get("stats", {}),
+                "quality_score": analysis_result.get("quality_score", 0.0),
+                "recommendations": analysis_result.get("recommendations", [])
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error during auto-analysis: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Auto-analysis failed: {str(e)}"}), 500
+
+
 @app.route('/timeline-comparison/<job_id>', methods=['GET'])
 @require_auth()
 @error_handler
@@ -990,7 +1289,11 @@ def get_timeline_comparison(job_id):
         from parsers.drt_parser import DRTParser
 
         original_drt = job_status.get("drt_file")
-        edited_drt = job_status.get("result", {}).get("output_file")
+        # Check for AI edited timeline first, fallback to processed timeline
+        edited_drt = (
+            job_status.get("result", {}).get("ai_edited_output_file") or
+            job_status.get("result", {}).get("output_file")
+        )
 
         if not original_drt or not os.path.exists(original_drt):
             return jsonify({"error": "Original timeline file not found"}), 404
@@ -1088,8 +1391,20 @@ def generate_timeline_comparison(original_timeline, edited_timeline=None):
     # Calculate statistics
     total_removed_duration = sum(region["duration"] for region in removed_regions)
     time_saved = original_duration - edited_duration
-    compression_ratio = edited_duration / original_duration if original_duration > 0 else 1.0
-    compression_percentage = (1 - compression_ratio) * 100
+
+    # Handle edge cases for division by zero
+    if original_duration == 0 and edited_duration == 0:
+        # Both timelines are empty
+        compression_ratio = 1.0
+        compression_percentage = 0
+    elif original_duration == 0:
+        # Original timeline is empty but edited has content (shouldn't happen, but handle it)
+        compression_ratio = 0
+        compression_percentage = 0
+    else:
+        # Normal case: calculate ratio
+        compression_ratio = edited_duration / original_duration
+        compression_percentage = (1 - compression_ratio) * 100
 
     return {
         "original": {
@@ -1137,7 +1452,12 @@ def calculate_removed_regions(original_clips, edited_clips):
         original_time_range = range(int(clip["start"] * 100), int(clip["end"] * 100))
         overlap = sum(1 for t in original_time_range if t in edited_times)
 
-        if overlap / len(list(original_time_range)) < 0.5:  # Less than 50% overlap
+        # Handle zero-length clips (avoid division by zero)
+        time_range_len = len(list(original_time_range))
+        if time_range_len == 0:
+            continue  # Skip zero-length clips
+
+        if overlap / time_range_len < 0.5:  # Less than 50% overlap
             removed_regions.append({
                 "start": clip["start"],
                 "end": clip["end"],

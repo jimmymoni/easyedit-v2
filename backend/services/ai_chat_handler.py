@@ -55,57 +55,56 @@ class AIChatHandler:
                     'options': []
                 }
 
-            # Extract analysis data
+            # Extract analysis data from new knowledge base structure
             content_type = content_analysis.get('content_type', 'unknown')
-            primary_type = content_type.get('primary_type', 'unknown') if isinstance(content_type, dict) else content_type
-            confidence = content_type.get('primary_confidence', 0) if isinstance(content_type, dict) else 0
-            key_moments_count = len(content_analysis.get('key_moments', []))
-            repurposing_options = content_analysis.get('repurposing_options', [])
+            main_topic = content_analysis.get('main_topic', 'your content')
+            features_discussed = content_analysis.get('features_discussed', [])
+            key_moments = content_analysis.get('key_moments', [])
 
             # Build intelligent greeting
-            confidence_pct = int(confidence * 100) if confidence else 0
-
             greeting_parts = []
-            greeting_parts.append(f"🎯 I've analyzed your **{primary_type}** content")
 
-            if confidence_pct >= 50:
-                greeting_parts.append(f"({confidence_pct}% confident)")
-
-            if key_moments_count > 0:
-                greeting_parts.append(f"and found **{key_moments_count} key moments**.")
+            if content_type and content_type != 'unknown':
+                greeting_parts.append(f"🎯 I've analyzed your **{content_type}** content about **{main_topic}**.")
             else:
-                greeting_parts.append(".")
+                greeting_parts.append(f"🎯 I've analyzed your content about **{main_topic}**.")
 
-            if repurposing_options:
-                greeting_parts.append(f"\n\n**Here are {len(repurposing_options)} ways to repurpose it:**")
+            # Show features if available
+            if features_discussed:
+                greeting_parts.append(f"\n\nI found **{len(features_discussed)} main features/topics** you discussed:")
+                for feature in features_discussed[:3]:  # Show first 3
+                    duration_min = feature.get('duration', 0) / 60
+                    greeting_parts.append(f"\n• **{feature.get('name')}** ({duration_min:.1f}min)")
 
-            greeting_message = " ".join(greeting_parts)
+                if len(features_discussed) > 3:
+                    greeting_parts.append(f"\n... and {len(features_discussed) - 3} more")
 
-            # Format repurposing options as clickable options
+                greeting_parts.append("\n\n**Click a feature to extract it, or describe what you want!**")
+            else:
+                greeting_parts.append("\n\nWhat would you like to do with this timeline?")
+
+            greeting_message = "".join(greeting_parts)
+
+            # Create clickable options for each feature
             formatted_options = []
-            for idx, option in enumerate(repurposing_options):
-                option_name = option.get('name', f'Option {idx + 1}')
-                duration = option.get('duration', 0)
-                platform = option.get('platform', 'Social Media')
-                description = option.get('description', '')
-
+            for feature in features_discussed:
+                duration_min = feature.get('duration', 0) / 60
                 formatted_options.append({
-                    'id': f'repurpose_{idx}',
-                    'label': f"{option_name} ({int(duration)}s for {platform})",
-                    'description': description,
-                    'action': 'apply_repurposing',
+                    'id': f"extract_feature_{feature.get('id', 'unknown')}",
+                    'label': f"Extract: {feature.get('name')}",
+                    'description': f"{duration_min:.1f}min - {feature.get('description', 'No description')}",
                     'params': {
-                        'prompt': f"Apply repurposing: {option_name} ({int(duration)}s for {platform})",
-                        'option_index': idx,
-                        'segments': option.get('segments', []),
-                        'style': option.get('style', 'default'),
-                        'duration': duration,
-                        'platform': platform
+                        'operation': 'feature_extraction',
+                        'feature_id': feature.get('id'),
+                        'feature_name': feature.get('name'),
+                        'start_time': feature.get('start_time'),
+                        'end_time': feature.get('end_time'),
+                        'prompt': f"Extract {feature.get('name')} feature"
                     }
                 })
 
             return {
-                'needs_confirmation': True,  # User can click options
+                'needs_confirmation': True if features_discussed else False,
                 'message': greeting_message,
                 'options': formatted_options,
                 'content_analysis': content_analysis  # Pass through for reference

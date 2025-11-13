@@ -80,6 +80,13 @@ class AudioExtractor:
 
             logger.info(f"Found {len(audio_track.clips)} clips to extract")
 
+            # DEBUG: Log all clip timestamps being extracted
+            for i, clip in enumerate(audio_track.clips, 1):
+                if clip.enabled:
+                    start = clip.media_start if clip.media_start is not None else clip.start_time
+                    end = clip.media_end if clip.media_end is not None else clip.end_time
+                    logger.info(f"  Clip {i}: media_start={start}s, media_end={end}s, duration={end-start}s")
+
             # Extract segments using ffmpeg
             temp_segment_files = []
             try:

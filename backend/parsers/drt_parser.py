@@ -2,6 +2,7 @@ import defusedxml.ElementTree as ET
 import json
 import zipfile
 import os
+import re
 import tempfile
 from typing import Dict, Any, Optional
 from models.timeline import Timeline, Track, Clip
@@ -168,6 +169,14 @@ class DRTParser:
                 preview = xml_content[:100].replace('\n', '\\n').replace('\r', '\\r')
                 logger.error(f"Content does not start with '<'. First 100 chars: {preview}")
                 raise ValidationError(f"Content does not appear to be valid XML. Content starts with: {xml_content[:50]}")
+
+            # Sanitize XML: Fix invalid double colons in tag names (DaVinci Resolve export quirk)
+            # Replace patterns like <ListMgt::LmPowerNodeList> with <ListMgt_LmPowerNodeList>
+            # Also handle closing tags like </ListMgt::LmPowerNodeList>
+            original_content = xml_content
+            xml_content = re.sub(r'<(/?)(\w+)::(\w+)', r'<\1\2_\3', xml_content)
+            if xml_content != original_content:
+                logger.info("Sanitized XML: replaced :: with _ in tag names (DaVinci Resolve compatibility fix)")
 
             # Secure XML parsing with defusedxml (automatic XXE protection)
             root = ET.fromstring(xml_content)

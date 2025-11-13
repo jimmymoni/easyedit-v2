@@ -18,6 +18,7 @@ from utils.error_handlers import ProcessingError, ValidationError
 import logging
 import os
 import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,26 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
                 logger.exception("Full transcription error traceback:")
                 # Continue without transcription
 
+        # Content Analysis (if transcription available)
+        content_analysis = None
+        if transcription_data:
+            if self:
+                self.update_state(
+                    state='PROGRESS',
+                    meta={'progress': 63, 'message': 'Analyzing content structure...', 'job_id': job_id}
+                )
+            broadcast_progress(job_id, 63, 'Analyzing content structure...')
+
+            try:
+                from services.content_analyzer import ContentAnalyzer
+                analyzer = ContentAnalyzer()
+                content_analysis = analyzer.analyze_content(transcription_data)
+                logger.info(f"Content analysis complete for job {job_id}: {content_analysis.get('main_topic', 'Unknown topic')}")
+                logger.info(f"   Found {len(content_analysis.get('features_discussed', []))} features")
+            except Exception as e:
+                logger.warning(f"Content analysis failed for job {job_id}: {str(e)}")
+                # Continue without content analysis
+
         # Filler word detection (if transcription available)
         filler_word_data = None
         if transcription_data and options.get('detect_filler_words', False):
@@ -254,6 +275,7 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
                 'speech_segments_count': len(audio_analysis['speech_segments']),
                 'cut_points_count': len(audio_analysis['cut_points'])
             },
+            'content_analysis': content_analysis,  # Knowledge base for God Mode
             'filler_word_detection': filler_word_data if filler_word_data and filler_word_data.get('success') else None,
             'ai_enhancements': ai_enhancements if ai_enhancements and ai_enhancements.get('success') else None,
             'processing_time': time.time() - (self.request.started if self and hasattr(self, 'request') and hasattr(self.request, 'started') else time.time()),

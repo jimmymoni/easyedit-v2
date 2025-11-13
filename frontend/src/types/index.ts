@@ -81,3 +81,54 @@ export interface AIEditResponse {
   changes_made: Record<string, any>;
   prompt: string;
 }
+
+// God Mode - Knowledge Base Types
+export interface Feature {
+  id: string;
+  name: string;
+  description: string;
+  start_time: number;
+  end_time: number;
+  duration: number;
+  key_points?: string[];
+  confidence?: number;
+  user_edited: boolean;
+}
+
+export interface Chapter {
+  title: string;
+  start: number;
+  end: number;
+}
+
+export interface KeyMoment {
+  description: string;
+  timestamp: number;
+  engagement: 'high' | 'medium' | 'low';
+}
+
+export interface ContentAnalysis {
+  content_type: string;
+  main_topic: string;
+  features_discussed: Feature[];
+  chapters: Chapter[];
+  key_moments: KeyMoment[];
+  metadata: {
+    analyzed_at: string;
+    analyzer_version: string;
+    user_modified: boolean;
+    last_edited?: string;
+    llm_model?: string;
+    analysis_method?: string;
+    analysis_error?: string;
+  };
+}
+
+export interface KnowledgeBaseResponse {
+  job_id: string;
+  content_analysis: ContentAnalysis;
+}
+
+export interface KnowledgeBaseUpdateRequest {
+  content_analysis: ContentAnalysis;
+}

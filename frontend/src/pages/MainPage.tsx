@@ -141,9 +141,10 @@ const MainPage: React.FC = () => {
       setAudioFile(null);
       setDrtFile(null);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Upload or processing failed:', error);
-      alert('Upload or processing failed. Please try again.');
+      const errorMessage = error.response?.data?.error || error.message || 'Unknown error';
+      alert(`Upload or processing failed: ${errorMessage}\n\nPlease try again.`);
     } finally {
       setIsUploading(false);
       setUploadProgress(null);

@@ -114,34 +114,51 @@ class ReplicateWhisperClient:
         try:
             start_time = time.time()
 
-            # Prepare input parameters using correct parameter names
-            # Per Replicate docs: use file_string (base64), file_url, or file (path)
-            input_params = {
-                "file": open(upload_path, "rb"),  # Pass file handle (Replicate SDK handles this)
-            }
+            # Open file with context manager to ensure proper cleanup
+            # This prevents file handle leaks that cause 502 errors with long-running API calls
+            with open(upload_path, "rb") as audio_file:
+                # Prepare input parameters using correct parameter names
+                # Per Replicate docs: use file_string (base64), file_url, or file (path)
+                input_params = {
+                    "file": audio_file,  # File handle stays open during API call
+                }
 
-            # Add language if specified (don't send None, omit instead)
-            if language:
-                input_params["language"] = language
+                # Add language if specified (don't send None, omit instead)
+                if language:
+                    input_params["language"] = language
 
-            # Add speaker diarization params if enabled
-            if enable_speaker_diarization:
-                if num_speakers:
-                    input_params["num_speakers"] = num_speakers
+                # Add speaker diarization params if enabled
+                if enable_speaker_diarization:
+                    if num_speakers:
+                        input_params["num_speakers"] = num_speakers
 
-            # Add vocabulary prompt if provided (improves accuracy for names/technical terms)
-            if prompt:
-                input_params["prompt"] = prompt
+                # Add vocabulary prompt if provided (improves accuracy for names/technical terms)
+                if prompt:
+                    input_params["prompt"] = prompt
 
-            # Run transcription using replicate.run() (recommended API method in SDK v0.25+)
-            # Note: replicate.run() automatically uses latest model version
-            logger.info(f"Running Replicate model: {self.MODEL_ID}")
-            logger.info(f"Input parameters: {list(input_params.keys())}")
+                # Run transcription using replicate.run() (recommended API method in SDK v0.25+)
+                # Note: replicate.run() automatically uses latest model version
+                logger.info(f"Running Replicate model: {self.MODEL_ID}")
+                logger.info(f"Input parameters: {list(input_params.keys())}")
 
-            output = replicate.run(
-                self.MODEL_ID,
-                input=input_params
-            )
+                # Retry logic for transient 502 errors (Replicate infrastructure issues)
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        output = replicate.run(
+                            self.MODEL_ID,
+                            input=input_params
+                        )
+                        break  # Success! Exit retry loop
+                    except Exception as e:
+                        # Check if it's a 502 error (transient infrastructure issue)
+                        if "502" in str(e) and attempt < max_retries - 1:
+                            wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                            logger.warning(f"Replicate API returned 502, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                            time.sleep(wait_time)
+                        else:
+                            # Not a 502 or max retries reached
+                            raise
 
             logger.info(f"Transcription completed successfully")
 

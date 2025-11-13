@@ -123,8 +123,8 @@ class TranscriptionService(ABC):
         segments = transcription_result.get('segments', [])
 
         for i in range(len(segments) - 1):
-            current_end = segments[i].get('end_time', 0)
-            next_start = segments[i + 1].get('start_time', 0)
+            current_end = segments[i].get('end', 0)
+            next_start = segments[i + 1].get('start', 0)
             gap_duration = next_start - current_end
 
             if gap_duration >= min_gap_seconds:
@@ -136,45 +136,6 @@ class TranscriptionService(ABC):
                 })
 
         return silence_gaps
-
-
-class GoogleCloudSTTAdapter(TranscriptionService):
-    """Adapter for Google Cloud Speech-to-Text V1 API"""
-
-    def __init__(self, credentials_path: Optional[str] = None, project_id: Optional[str] = None):
-        super().__init__(api_key=None)  # Google uses service account, not API key
-        from services.google_stt_v1_client import GoogleSTTV1Client
-        self.client = GoogleSTTV1Client(
-            credentials_path=credentials_path or Config.GOOGLE_APPLICATION_CREDENTIALS,
-            project_id=project_id or Config.GOOGLE_CLOUD_PROJECT
-        )
-        self.provider_name = 'google_cloud_stt_v1'
-
-    def transcribe_audio(
-        self,
-        audio_file_path: str,
-        enable_speaker_diarization: bool = True,
-        language_code: str = None
-    ) -> Dict[str, Any]:
-        """Transcribe using Google Cloud STT V2 and normalize response"""
-        # Default to Malayalam-India if not specified
-        lang = language_code or 'ml-IN'
-
-        # Google client returns already normalized format
-        result = self.client.transcribe_audio(
-            audio_file_path=audio_file_path,
-            enable_speaker_diarization=enable_speaker_diarization,
-            language_code=lang
-        )
-
-        # Add language metadata (provider already added by client)
-        result['language'] = lang
-
-        return result
-
-    def check_api_status(self) -> bool:
-        """Check Google Cloud STT API accessibility"""
-        return self.client.check_api_status()
 
 
 class ReplicateWhisperAdapter(TranscriptionService):
@@ -214,22 +175,16 @@ class TranscriptionServiceFactory:
     """
     Factory for creating transcription service instances
 
-    Primary: Replicate Whisper (cost-effective, 95% cheaper than Google Cloud)
-    Backup: Google Cloud Speech-to-Text V1 (enterprise-grade reliability)
+    Uses Replicate Whisper for all transcription (cost-effective, high-quality)
 
-    Architecture allows easy switching between providers or adding new ones.
+    Architecture allows easy addition of other providers in the future if needed.
     """
 
     PROVIDERS = {
-        # Primary: Replicate Whisper (recommended)
+        # Replicate Whisper (only provider)
         'replicate': ReplicateWhisperAdapter,
         'replicate_whisper': ReplicateWhisperAdapter,
         'whisper': ReplicateWhisperAdapter,
-
-        # Backup: Google Cloud STT
-        'google': GoogleCloudSTTAdapter,
-        'google_cloud': GoogleCloudSTTAdapter,
-        'google_cloud_stt_v1': GoogleCloudSTTAdapter,
     }
 
     @classmethod
@@ -238,16 +193,16 @@ class TranscriptionServiceFactory:
         Create a transcription service instance
 
         Args:
-            provider: Provider name ('replicate', 'whisper', 'google', etc.)
-                     If None or 'auto', uses Replicate Whisper (primary)
+            provider: Provider name ('replicate', 'whisper')
+                     If None or 'auto', uses Replicate Whisper
 
         Returns:
-            TranscriptionService instance (ReplicateWhisperAdapter or GoogleCloudSTTAdapter)
+            TranscriptionService instance (ReplicateWhisperAdapter)
 
         Raises:
-            ValueError: If required credentials not configured
+            ValueError: If Replicate API token not configured
         """
-        # Default to Replicate Whisper
+        # Default to Replicate Whisper (only provider)
         selected_provider = provider or 'replicate_whisper'
 
         # Handle 'auto' for backwards compatibility
@@ -262,52 +217,17 @@ class TranscriptionServiceFactory:
                 f"Available providers: {available}"
             )
 
-        # Get adapter class
-        adapter_class = cls.PROVIDERS[selected_provider]
+        # Check Replicate API token
+        if not Config.REPLICATE_API_TOKEN:
+            raise ValueError(
+                "Replicate API token not configured. "
+                "Set REPLICATE_API_TOKEN in your .env file to enable transcription.\n"
+                "Get your token at: https://replicate.com/account\n"
+                "Cost: ~$0.078 per hour of audio"
+            )
 
-        # Check credentials based on provider
-        if adapter_class == ReplicateWhisperAdapter:
-            # Check Replicate API token
-            if not Config.REPLICATE_API_TOKEN:
-                raise ValueError(
-                    "Replicate API token not configured. "
-                    "Set REPLICATE_API_TOKEN in your .env file to enable transcription.\n"
-                    "Get your token at: https://replicate.com/account\n"
-                    "Cost: ~$0.078 per hour of audio (95% cheaper than Google Cloud)"
-                )
-
-            logger.info(f"Creating Replicate Whisper service (primary provider)")
-            return ReplicateWhisperAdapter()
-
-        elif adapter_class == GoogleCloudSTTAdapter:
-            # Check Google Cloud credentials
-            if not Config.GOOGLE_APPLICATION_CREDENTIALS:
-                raise ValueError(
-                    "Google Cloud credentials not configured. "
-                    "Set GOOGLE_APPLICATION_CREDENTIALS in your .env file to enable transcription.\n"
-                    "Get started with $300 free credits at https://cloud.google.com/speech-to-text"
-                )
-
-            if not Config.GOOGLE_CLOUD_PROJECT:
-                raise ValueError(
-                    "Google Cloud project ID not configured. "
-                    "Set GOOGLE_CLOUD_PROJECT in your .env file."
-                )
-
-            logger.info(f"Creating Google Cloud Speech-to-Text V1 service (backup provider)")
-            return GoogleCloudSTTAdapter()
-
-        else:
-            raise ValueError(f"Unsupported adapter class: {adapter_class}")
-
-    @classmethod
-    def _auto_select_provider(cls) -> str:
-        """
-        Auto-select provider (always returns 'google_cloud_stt_v2')
-
-        Kept for backwards compatibility.
-        """
-        return 'google_cloud_stt_v2'
+        logger.info(f"Creating Replicate Whisper service")
+        return ReplicateWhisperAdapter()
 
     @classmethod
     def get_available_providers(cls) -> List[str]:
@@ -315,35 +235,31 @@ class TranscriptionServiceFactory:
         Get list of available providers
 
         Returns:
-            List containing 'google_cloud_stt_v2' if credentials are configured
+            List containing 'replicate_whisper' if token is configured
         """
-        return ['google_cloud_stt_v2'] if (Config.GOOGLE_APPLICATION_CREDENTIALS and Config.GOOGLE_CLOUD_PROJECT) else []
+        return ['replicate_whisper'] if Config.REPLICATE_API_TOKEN else []
 
     @classmethod
     def get_provider_info(cls) -> Dict[str, Dict[str, Any]]:
         """
-        Get information about Google Cloud STT V2 provider
+        Get information about Replicate Whisper provider
 
         Returns:
             Dictionary with provider details (cost, features, etc.)
         """
         return {
-            'google_cloud_stt_v2': {
-                'name': 'Google Cloud Speech-to-Text V2',
-                'cost_per_hour': 1.62,  # USD ($0.18 base + $1.44 diarization)
+            'replicate_whisper': {
+                'name': 'Replicate Whisper with Speaker Diarization',
+                'cost_per_hour': 0.078,  # USD
                 'cost_breakdown': {
-                    'base_transcription': 0.18,
-                    'speaker_diarization': 1.44,
+                    'transcription_with_diarization': 0.078,
                 },
                 'currency': 'USD',
-                'languages': '125+ languages',
-                'features': ['speaker_diarization', 'automatic_punctuation', 'word_timestamps', 'word_confidence'],
-                'best_for': 'Enterprise-grade transcription, Malayalam/English, multi-speaker scenarios',
-                'credentials_env': 'GOOGLE_APPLICATION_CREDENTIALS',
-                'project_env': 'GOOGLE_CLOUD_PROJECT',
-                'free_credits': '$300 for 3 months (~185 hours with diarization)',
-                'free_tier': '60 min/month',
-                'signup_url': 'https://cloud.google.com/speech-to-text',
-                'configured': bool(Config.GOOGLE_APPLICATION_CREDENTIALS and Config.GOOGLE_CLOUD_PROJECT)
+                'languages': '90+ languages (auto-detect)',
+                'features': ['speaker_diarization', 'automatic_punctuation', 'word_timestamps', 'multilingual'],
+                'best_for': 'Cost-effective transcription with speaker diarization',
+                'credentials_env': 'REPLICATE_API_TOKEN',
+                'signup_url': 'https://replicate.com/account',
+                'configured': bool(Config.REPLICATE_API_TOKEN)
             }
         }

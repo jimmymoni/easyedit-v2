@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { Play, Pause, Volume2, ZoomIn, ZoomOut, GitCompare, ArrowLeft, ArrowRight, Scissors, TrendingDown } from 'lucide-react';
 import axios from 'axios';
@@ -13,14 +13,18 @@ interface WaveformViewerProps {
   onViewModeChange?: (mode: 'original' | 'edited') => void; // Notify when view mode changes
 }
 
-const EnhancedWaveformViewer: React.FC<WaveformViewerProps> = ({
+export interface WaveformViewerHandle {
+  reloadComparison: () => Promise<void>;
+}
+
+const EnhancedWaveformViewer = forwardRef<WaveformViewerHandle, WaveformViewerProps>(({
   jobId,
   audioUrl,
   onSeekReady,
   onTimeUpdate,
   autoSwitchToEdited = false,
   onViewModeChange
-}) => {
+}, ref) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -75,6 +79,11 @@ const EnhancedWaveformViewer: React.FC<WaveformViewerProps> = ({
       setIsLoadingComparison(false);
     }
   };
+
+  // Expose reloadComparison method to parent via ref
+  useImperativeHandle(ref, () => ({
+    reloadComparison: loadComparisonData
+  }));
 
   useEffect(() => {
     if (!waveformRef.current) return;
@@ -245,10 +254,12 @@ const EnhancedWaveformViewer: React.FC<WaveformViewerProps> = ({
     }
 
     // Switch audio URL based on view mode
+    // Add cache-busting timestamp to force browser to fetch new audio
+    const timestamp = Date.now();
     if (newMode === 'edited') {
-      setCurrentAudioUrl(`http://localhost:5000/audio/${jobId}/edited`);
+      setCurrentAudioUrl(`http://localhost:5000/audio/${jobId}/edited?t=${timestamp}`);
     } else {
-      setCurrentAudioUrl(audioUrl);
+      setCurrentAudioUrl(`${audioUrl}?t=${timestamp}`);
     }
   };
 
@@ -486,6 +497,8 @@ const EnhancedWaveformViewer: React.FC<WaveformViewerProps> = ({
       )}
     </div>
   );
-};
+});
+
+EnhancedWaveformViewer.displayName = 'EnhancedWaveformViewer';
 
 export default EnhancedWaveformViewer;
