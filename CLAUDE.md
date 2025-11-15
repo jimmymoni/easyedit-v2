@@ -796,6 +796,8 @@ Follow these components as examples:
    - Cost: $0.078/hour (~95% cheaper than Google Cloud)
    - Config: `REPLICATE_API_TOKEN` in `.env`
    - Features: Multilingual, auto-detect language, speaker diarization
+   - **CRITICAL:** Uses custom `httpx.Timeout(write=600.0)` to prevent upload timeouts
+   - **Fix Applied:** November 13, 2025 - Extended write timeout from 30s to 600s
 
 2. **Google Cloud Speech-to-Text V1** (BACKUP)
    - File: `backend/services/google_stt_v1_client.py`

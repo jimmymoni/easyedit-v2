@@ -52,11 +52,13 @@ class ReplicateWhisperClient:
 
     def __init__(self, api_token: Optional[str] = None):
         """
-        Initialize Replicate Whisper client
+        Initialize Replicate Whisper client with custom timeout configuration
 
         Args:
             api_token: Replicate API token (or set REPLICATE_API_TOKEN env var)
         """
+        import httpx
+
         self.api_token = api_token or os.getenv('REPLICATE_API_TOKEN')
 
         if not self.api_token:
@@ -65,10 +67,38 @@ class ReplicateWhisperClient:
                 "or pass api_token parameter. Get your token from: https://replicate.com/account"
             )
 
-        # Configure replicate client
-        os.environ['REPLICATE_API_TOKEN'] = self.api_token
+        # ⚠️ CRITICAL: Custom timeout configuration to prevent upload failures
+        # ⚠️ DO NOT REMOVE OR REDUCE THESE TIMEOUT VALUES!
+        #
+        # Background: Replicate SDK defaults to httpx.Timeout(write=30.0) which is
+        # too short for uploading large audio files (>5MB) on slow networks.
+        # This caused "The write operation timed out" errors intermittently.
+        #
+        # Fix: Extended write timeout to 600s (10 minutes) to handle:
+        # - Large audio files (up to 280MB)
+        # - Slow network connections (~0.5 MB/s upload speed)
+        # - Celery task overhead (2-5 seconds)
+        #
+        # Tested: 9MB file uploads in 38s with this configuration
+        # Bug Report: Session 10 (November 13, 2025) - Deep investigation confirmed
+        #             httpcore socket.timeout after 30s was root cause
+        custom_timeout = httpx.Timeout(
+            connect=30.0,   # 30 seconds to establish connection
+            read=600.0,     # 10 minutes to read response (GPU processing time)
+            write=600.0,    # 10 minutes to upload file (CRITICAL: prevents timeout errors)
+            pool=30.0       # 30 seconds to acquire connection from pool
+        )
 
-        logger.info(f"ReplicateWhisperClient initialized with model: {self.MODEL_ID}")
+        # Initialize Replicate client with custom timeout
+        self.client = replicate.Client(
+            api_token=self.api_token,
+            timeout=custom_timeout
+        )
+
+        logger.info(
+            f"ReplicateWhisperClient initialized with model: {self.MODEL_ID}, "
+            f"write_timeout=600s (fixes upload timeout issue)"
+        )
 
     def transcribe_audio(
         self,
@@ -121,6 +151,7 @@ class ReplicateWhisperClient:
                 # Per Replicate docs: use file_string (base64), file_url, or file (path)
                 input_params = {
                     "file": audio_file,  # File handle stays open during API call
+                    "group_segments": True,  # Group consecutive segments from same speaker
                 }
 
                 # Add language if specified (don't send None, omit instead)
@@ -136,16 +167,17 @@ class ReplicateWhisperClient:
                 if prompt:
                     input_params["prompt"] = prompt
 
-                # Run transcription using replicate.run() (recommended API method in SDK v0.25+)
-                # Note: replicate.run() automatically uses latest model version
+                # Run transcription using custom client with extended timeout
+                # Uses self.client.run() instead of replicate.run() to apply custom timeout
                 logger.info(f"Running Replicate model: {self.MODEL_ID}")
                 logger.info(f"Input parameters: {list(input_params.keys())}")
+                logger.info(f"Using custom timeout: write=600s, read=600s")
 
                 # Retry logic for transient 502 errors (Replicate infrastructure issues)
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        output = replicate.run(
+                        output = self.client.run(
                             self.MODEL_ID,
                             input=input_params
                         )
