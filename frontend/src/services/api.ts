@@ -5,7 +5,7 @@ const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:5000' : 'http://loc
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 300000, // 5 minutes for long processing jobs
+  timeout: 600000, // 10 minutes for AI analysis and long processing jobs
 });
 
 // Global variable to prevent race conditions in token refresh
@@ -184,7 +184,9 @@ export const processTimeline = async (
   jobId: string,
   options: ProcessingOptions = {}
 ): Promise<ProcessingResponse> => {
-  const response = await api.post<ProcessingResponse>(`/process/${jobId}`, options);
+  const response = await api.post<ProcessingResponse>(`/process/${jobId}`, options, {
+    timeout: 600000, // 10 minutes for AI transcription and analysis
+  });
   return response.data;
 };
 
@@ -242,6 +244,8 @@ export const sendChatMessage = async (jobId: string, message: string): Promise<a
   const response = await api.post('/ai-chat', {
     job_id: jobId,
     message: message,
+  }, {
+    timeout: 120000, // 2 minutes for GPT-4-Turbo transcript analysis (optimized from 10min)
   });
   return response.data;
 };
