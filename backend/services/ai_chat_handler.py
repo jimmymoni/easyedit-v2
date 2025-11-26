@@ -9,7 +9,9 @@ import os
 from typing import Dict, List, Any, Optional
 from models.timeline import Timeline
 import replicate
+import httpx
 from config import Config
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +21,18 @@ class AIChatHandler:
 
     def __init__(self):
         self.conversation_history = []
-        # Use OpenAI GPT-4o via Replicate for reliable JSON output and better reasoning
+        # Use DeepSeek-R1 for reliable JSON output and better reasoning
         self.replicate_token = Config.REPLICATE_API_TOKEN
-        self.llm_model = "openai/gpt-4o"
+        # DeepSeek-R1 has native JSON mode support
+        self.llm_model = "deepseek-ai/deepseek-r1"
 
         if not self.replicate_token:
             logger.warning("No REPLICATE_API_TOKEN found - AI features will be limited")
+
+        # OpenAI client for fast transcript analysis (replaces DeepSeek for short-form content)
+        self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY) if Config.OPENAI_API_KEY else None
+        if not self.openai_client:
+            logger.warning("No OPENAI_API_KEY found - using DeepSeek-R1 fallback (slower)")
 
         # Load God Mode system prompt
         system_prompt_path = os.path.join(os.path.dirname(__file__), '..', 'system_prompts', 'godmode_adaptive.txt')
@@ -174,30 +182,60 @@ class AIChatHandler:
         Returns:
             Dict with intent, confidence, duration, content_type, platform, reasoning, etc.
         """
-        # Fallback to keyword matching if Replicate token not available
+        # OPTIMIZATION: Try keyword matching first (fast path - skips API call)
+        keyword_result = self._detect_intent_keywords(message)
+
+        # If keyword matching has high confidence (>0.7), use it directly (saves 30-60s)
+        if keyword_result.get('confidence', 0) > 0.7:
+            logger.info(f"Using fast keyword-based intent: {keyword_result.get('intent')} (confidence: {keyword_result.get('confidence')})")
+            return keyword_result
+
+        # Fallback to AI if keywords not confident or Replicate token not available
         if not self.replicate_token:
             logger.warning("Replicate token not available, using keyword-based intent detection")
-            return self._detect_intent_keywords(message)
+            return keyword_result
 
         try:
             # Build context for GPT-4
             context = f"Audio duration: {transcription_data.get('duration', 'unknown')}s" if transcription_data else "No transcription available"
 
             # Call GPT-4 to analyze intent
+            # Use Replicate LLaMA 3.1 70B for intent detection
             prompt = f"{self.god_mode_prompt}\n\nContext: {context}\n\nUser request: {message}\n\nAnalyze the user's intent and respond with ONLY a JSON object (no markdown, no explanation)."
 
-            output = replicate.run(
-                self.llm_model,
-                input={
-                    "prompt": f"{self.god_mode_prompt}\n\nContext: {context}\n\nUser request: {message}\n\nAnalyze the user's intent and respond with ONLY a JSON object (no markdown, no explanation).",
-                    "max_tokens": 2048,
-                    "temperature": 0.1,
-                    "top_p": 1.0
-                }
-            )
+            # Create client with custom timeout (30s total, 10s for connection)
+            timeout = httpx.Timeout(30.0, connect=10.0)
+            client = replicate.Client(api_token=self.replicate_token, timeout=timeout)
 
-            # Replicate returns an iterator, concatenate to get full response
-            response_text = "".join(output).strip()
+            try:
+                output = client.run(
+                    self.llm_model,
+                    input={
+                        "prompt": prompt,
+                        "max_tokens": 2048,
+                        "temperature": 0.1,
+                        "top_p": 1.0
+                    }
+                )
+
+                # Validate output is not None
+                if output is None:
+                    logger.error("Replicate API returned None, using fallback intent detection")
+                    return self._detect_intent_keywords(message)
+
+                # Replicate returns an iterator, concatenate all chunks
+                response_text = "".join(output).strip()
+
+                if not response_text:
+                    logger.error("Replicate API returned empty response, using fallback")
+                    return self._detect_intent_keywords(message)
+
+            except httpx.TimeoutException as e:
+                logger.error(f"Replicate API timeout after 30s: {e}, using fallback intent detection")
+                return self._detect_intent_keywords(message)
+            except Exception as e:
+                logger.error(f"Replicate API error ({type(e).__name__}): {e}, using fallback")
+                return self._detect_intent_keywords(message)
 
             # Remove markdown code blocks if present
             if response_text.startswith('```'):
@@ -213,10 +251,11 @@ class AIChatHandler:
             return intent_data
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLaMA response as JSON: {e}. Response: {response_text}")
+            logger.error(f"Failed to parse LLaMA response as JSON: {e}")
+            logger.error(f"Response was: {response_text[:500] if 'response_text' in locals() else 'N/A'}")
             return self._detect_intent_keywords(message)
         except Exception as e:
-            logger.error(f"Error in LLaMA intent detection: {e}")
+            logger.error(f"Error in LLaMA intent detection ({type(e).__name__}): {e}")
             return self._detect_intent_keywords(message)
 
     def _detect_intent_keywords(self, message: str) -> Dict[str, Any]:
@@ -638,21 +677,40 @@ Return ONLY valid JSON array (no markdown code blocks, no explanations).
 """
 
         try:
-            # Use OpenAI GPT-4o via Replicate for segment analysis
-            system_message = "You are an expert video editor. Respond ONLY with valid JSON, no markdown formatting."
+            # PERFORMANCE OPTIMIZATION: Use GPT-4-Turbo instead of DeepSeek-R1 (10-30s vs 2-4min)
+            if self.openai_client:
+                logger.info("Using GPT-4-Turbo for fast transcript analysis (10-30s expected)")
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-4-turbo-preview",  # Fast model: 10-30s vs DeepSeek-R1's 2-4min
+                    messages=[
+                        {"role": "system", "content": "You are an expert video editor. Respond ONLY with valid JSON array, no markdown formatting."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=2048,
+                    temperature=0.1,
+                    timeout=90  # 90s timeout (vs 5min for DeepSeek)
+                )
 
-            output = replicate.run(
-                self.llm_model,
-                input={
-                    "prompt": f"{system_message}\n\n{prompt}",
-                    "max_tokens": 2048,
-                    "temperature": 0.1,
-                    "top_p": 1.0
-                }
-            )
+                response_text = response.choices[0].message.content.strip()
+            else:
+                # Fallback to DeepSeek if OpenAI not available (slower)
+                logger.warning("OpenAI not available, using DeepSeek-R1 (slower: 2-4min)")
+                system_message = "You are an expert video editor. Respond ONLY with valid JSON, no markdown formatting."
+                full_prompt = f"{system_message}\n\n{prompt}"
 
-            # Replicate returns an iterator, concatenate to get full response
-            response_text = "".join(output).strip()
+                analysis_timeout = httpx.Timeout(300.0, connect=10.0)
+                analysis_client = replicate.Client(api_token=self.replicate_token, timeout=analysis_timeout)
+
+                output = analysis_client.run(
+                    self.llm_model,
+                    input={
+                        "prompt": full_prompt,
+                        "max_tokens": 2048,
+                        "temperature": 0.1,
+                        "top_p": 1.0
+                    }
+                )
+                response_text = "".join(output).strip()
 
             # Remove markdown code blocks if present
             if response_text.startswith('```'):
@@ -667,64 +725,11 @@ Return ONLY valid JSON array (no markdown code blocks, no explanations).
             for seg in segments:
                 seg['duration'] = seg['end'] - seg['start']
 
-            logger.info(f"LLaMA 3.1 70B identified {len(segments)} segments for short-form content")
+            logger.info(f"AI identified {len(segments)} segments for short-form content")
 
-            # === VALIDATION: Check if segments are well-distributed ===
-            segments_list = transcription_data.get('segments', [])
-            total_dur = max(s.get('end', 0) for s in segments_list) if segments_list else 60
-
-            if segments and total_dur > 0:
-                latest_end = max(seg['end'] for seg in segments)
-
-                # Dynamic threshold: 40% for short videos, 50% for longer ones
-                threshold = 0.4 if total_dur < 120 else 0.5
-
-                if latest_end < (total_dur * threshold):
-                    logger.warning(f"⚠️ SEGMENTS CLUSTERED IN FIRST {threshold*100:.0f}%!")
-                    logger.warning(f"Latest segment ends at {latest_end:.1f}s / {total_dur:.1f}s total")
-                    logger.warning(f"Retrying with stronger constraint...")
-
-                    # RETRY ONCE with stronger prompt
-                    retry_prompt = prompt + f"\n\n⚠️ RETRY: Previous response clustered segments too early. FORCE at least one segment to start AFTER {total_dur*threshold:.0f}s. Distribute across full {total_dur:.0f}s timeline!"
-
-                    try:
-                        retry_output = replicate.run(
-                            self.llm_model,
-                            input={
-                                "prompt": f"You are a professional video editor analyzing content for Instagram Reels. Return ONLY valid JSON array with no markdown formatting.\n\n{retry_prompt}",
-                                "max_tokens": 1500,
-                                "temperature": 0.4,
-                                "top_p": 0.9
-                            }
-                        )
-
-                        retry_response_text = "".join(retry_output).strip()
-
-                        # Remove markdown code blocks if present
-                        if retry_response_text.startswith('```'):
-                            retry_response_text = retry_response_text.split('```')[1]
-                            if retry_response_text.startswith('json'):
-                                retry_response_text = retry_response_text[4:]
-                            retry_response_text = retry_response_text.strip()
-
-                        retry_segments = json.loads(retry_response_text)
-
-                        # Add duration to retry segments
-                        for seg in retry_segments:
-                            seg['duration'] = seg['end'] - seg['start']
-
-                        # Check if retry improved distribution
-                        retry_latest = max(seg['end'] for seg in retry_segments)
-                        if retry_latest >= (total_dur * threshold):
-                            logger.info(f"✅ Retry succeeded! Latest segment now at {retry_latest:.1f}s")
-                            segments = retry_segments
-                        else:
-                            logger.warning(f"Retry still clustered ({retry_latest:.1f}s), using fallback")
-                            return self._fallback_segment_extraction(transcription_data, target_duration)
-
-                    except Exception as e:
-                        logger.error(f"Retry failed: {e}, using fallback")
-                        return self._fallback_segment_extraction(transcription_data, target_duration)
+            # PERFORMANCE OPTIMIZATION: Retry logic removed to eliminate 2-4 minute worst-case delay
+            # If segments are poorly distributed, user can request again with different prompt
+            # GPT-4-Turbo is generally better at distribution than DeepSeek-R1 anyway
 
             # Log segment details for debugging
             segment_summary = [

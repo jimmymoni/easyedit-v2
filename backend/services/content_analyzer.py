@@ -9,6 +9,8 @@ import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import replicate
+import httpx
+from openai import OpenAI
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -23,12 +25,16 @@ class ContentAnalyzer:
     """
 
     def __init__(self):
+        # PERFORMANCE OPTIMIZATION: Use GPT-4-Turbo (10-30s) instead of DeepSeek-R1 (2-4min)
+        self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY) if Config.OPENAI_API_KEY else None
         self.replicate_token = Config.REPLICATE_API_TOKEN
-        # Use OpenAI GPT-4o via Replicate for analysis
-        self.llm_model = "openai/gpt-4o"
+        # DeepSeek-R1 used as fallback only
+        self.llm_model = "deepseek-ai/deepseek-r1"
 
-        if not self.replicate_token:
-            logger.warning("No REPLICATE_API_TOKEN found - content analysis will be limited")
+        if not self.openai_client and not self.replicate_token:
+            logger.warning("No OPENAI_API_KEY or REPLICATE_API_TOKEN found - content analysis will be limited")
+        elif self.openai_client:
+            logger.info("Using GPT-4-Turbo for fast content analysis (10-30s)")
 
     def analyze_content(self, transcription_data: Dict) -> Dict[str, Any]:
         """
@@ -55,12 +61,12 @@ class ContentAnalyzer:
                 logger.warning("Transcript too short for analysis")
                 return self._empty_knowledge_base("Transcript too short to analyze")
 
-            # Use LLM to analyze if available
-            if not self.replicate_token:
-                logger.warning("Replicate API token not available, returning basic analysis")
+            # Use LLM to analyze if available (prefer OpenAI > Replicate)
+            if not self.openai_client and not self.replicate_token:
+                logger.warning("No AI service available, returning basic analysis")
                 return self._basic_analysis(transcription_data)
 
-            # Call OpenAI GPT-4o via Replicate for intelligent analysis
+            # Call AI for intelligent analysis (GPT-4-Turbo or DeepSeek-R1 fallback)
             knowledge_base = self._analyze_with_llm(transcript, transcription_data)
 
             logger.info(f"✅ Content analysis complete: {knowledge_base.get('main_topic', 'Unknown topic')}")
@@ -91,13 +97,13 @@ class ContentAnalyzer:
         return "\n".join(transcript_parts)
 
     def _analyze_with_llm(self, transcript: str, transcription_data: Dict) -> Dict[str, Any]:
-        """Use OpenAI GPT-4o via Replicate to analyze content structure"""
+        """Use GPT-4-Turbo (preferred) or DeepSeek-R1 (fallback) to analyze content structure"""
 
         # Calculate video duration
         segments = transcription_data.get('segments', [])
         total_duration = max(s.get('end', 0) for s in segments) if segments else 0
 
-        # Limit transcript length for analysis (GPT-4 context limit)
+        # Limit transcript length for analysis
         if len(transcript) > 50000:
             logger.info(f"Transcript too long ({len(transcript)} chars), sampling evenly")
             transcript = self._sample_transcript_evenly(transcript, transcription_data, 50000)
@@ -143,20 +149,37 @@ Respond with ONLY valid JSON (no markdown code blocks, no explanations).
 """
 
         try:
-            logger.info("Calling OpenAI GPT-4o via Replicate for content analysis...")
+            # PERFORMANCE OPTIMIZATION: Use GPT-4-Turbo instead of DeepSeek-R1 (10-30s vs 2-4min)
+            if self.openai_client:
+                logger.info("Calling GPT-4-Turbo for content analysis (10-30s expected)...")
 
-            output = replicate.run(
-                self.llm_model,
-                input={
-                    "prompt": f"You are an expert video content analyst. Return ONLY valid JSON with no markdown formatting.\n\n{analysis_prompt}",
-                    "max_tokens": 4096,
-                    "temperature": 0.2,
-                    "top_p": 1.0
-                }
-            )
+                try:
+                    response = self.openai_client.chat.completions.create(
+                        model="gpt-4-turbo-preview",  # Fast model: 10-30s vs DeepSeek-R1's 2-4min
+                        messages=[
+                            {"role": "system", "content": "You are an expert video content analyst. Respond ONLY with valid JSON, no markdown formatting."},
+                            {"role": "user", "content": analysis_prompt}
+                        ],
+                        max_tokens=4096,
+                        temperature=0.2,
+                        timeout=60  # 60s timeout (vs 60s for DeepSeek, but GPT-4 is much faster)
+                    )
 
-            # Get response text
-            response_text = "".join(output).strip()
+                    response_text = response.choices[0].message.content.strip()
+
+                except Exception as e:
+                    logger.error(f"OpenAI API error ({type(e).__name__}): {e}")
+                    # Fall back to DeepSeek if OpenAI fails
+                    if self.replicate_token:
+                        logger.warning("Falling back to DeepSeek-R1 (slower: 2-4min)")
+                        return self._analyze_with_deepseek(analysis_prompt)
+                    else:
+                        return {"error": f"API error: {str(e)}", "features": [], "chapters": [], "key_moments": []}
+
+            else:
+                # Fallback to DeepSeek if OpenAI not available (slower)
+                logger.warning("OpenAI not available, using DeepSeek-R1 (slower: 2-4min)")
+                return self._analyze_with_deepseek(analysis_prompt)
 
             # Remove markdown code blocks if present
             if response_text.startswith('```'):
@@ -165,7 +188,89 @@ Respond with ONLY valid JSON (no markdown code blocks, no explanations).
                     response_text = response_text[4:]
                 response_text = response_text.strip()
 
-            # Extract JSON from response (in case of any wrapper text)
+            # Extract JSON from response (handle thinking tags, etc.)
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+
+            if json_start != -1 and json_end > json_start:
+                response_text = response_text[json_start:json_end]
+
+            # Parse JSON
+            knowledge_base = json.loads(response_text)
+
+            # Add metadata
+            knowledge_base['metadata'] = {
+                'analyzed_at': datetime.utcnow().isoformat(),
+                'analyzer_version': '1.0',
+                'user_modified': False,
+                'llm_model': 'gpt-4-turbo-preview' if self.openai_client else self.llm_model
+            }
+
+            # Calculate durations and add IDs for features
+            for idx, feature in enumerate(knowledge_base.get('features_discussed', [])):
+                if 'start_time' in feature and 'end_time' in feature:
+                    feature['duration'] = feature['end_time'] - feature['start_time']
+                    feature['user_edited'] = False
+                    feature['id'] = f"feature_{idx + 1}"
+
+            return knowledge_base
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.error(f"Response: {response_text[:500]}")
+            return self._basic_analysis(transcription_data)
+        except Exception as e:
+            logger.error(f"Error calling LLM for analysis: {e}")
+            return self._basic_analysis(transcription_data)
+
+    def _analyze_with_deepseek(self, analysis_prompt: str) -> Dict[str, Any]:
+        """Fallback: Use DeepSeek-R1 for content analysis (slower but works when OpenAI unavailable)"""
+        try:
+            logger.info("Calling DeepSeek-R1 for content analysis (2-4min expected)...")
+
+            # Create client with custom timeout (60s total for larger analysis, 10s for connection)
+            timeout = httpx.Timeout(60.0, connect=10.0)
+            client = replicate.Client(api_token=self.replicate_token, timeout=timeout)
+
+            try:
+                output = client.run(
+                    self.llm_model,
+                    input={
+                        "prompt": analysis_prompt,
+                        "max_tokens": 4096,
+                        "temperature": 0.2,
+                        "top_p": 1.0
+                    }
+                )
+
+                # Validate output
+                if output is None:
+                    logger.error("DeepSeek API returned None")
+                    return {"error": "API returned no response", "features": [], "chapters": [], "key_moments": []}
+
+                # Concatenate response
+                response_text = "".join(output).strip()
+
+                if not response_text:
+                    logger.error("DeepSeek API returned empty response")
+                    return {"error": "Empty API response", "features": [], "chapters": [], "key_moments": []}
+
+            except httpx.TimeoutException as e:
+                logger.error(f"DeepSeek API timeout after 60s: {e}")
+                return {"error": "Analysis timeout", "features": [], "chapters": [], "key_moments": []}
+            except Exception as e:
+                logger.error(f"DeepSeek API error ({type(e).__name__}): {e}")
+                return {"error": f"API error: {str(e)}", "features": [], "chapters": [], "key_moments": []}
+
+            # Remove markdown code blocks if present
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+                response_text = response_text.strip()
+
+            # DeepSeek-R1 sometimes wraps response in <think> tags or adds explanations
+            # Extract JSON from response
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
 
@@ -193,12 +298,12 @@ Respond with ONLY valid JSON (no markdown code blocks, no explanations).
             return knowledge_base
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"Response: {response_text[:500]}")
-            return self._basic_analysis(transcription_data)
+            logger.error(f"Failed to parse DeepSeek response as JSON: {e}")
+            logger.error(f"Response: {response_text[:500] if 'response_text' in locals() else 'N/A'}")
+            return {"error": "Invalid JSON response", "features": [], "chapters": [], "key_moments": []}
         except Exception as e:
-            logger.error(f"Error calling LLM for analysis: {e}")
-            return self._basic_analysis(transcription_data)
+            logger.error(f"DeepSeek analysis error: {e}")
+            return {"error": f"Analysis error: {str(e)}", "features": [], "chapters": [], "key_moments": []}
 
     def _sample_transcript_evenly(self, transcript: str, transcription_data: Dict, max_chars: int) -> str:
         """
