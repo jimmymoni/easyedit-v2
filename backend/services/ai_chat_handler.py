@@ -19,10 +19,9 @@ class AIChatHandler:
 
     def __init__(self):
         self.conversation_history = []
-        # Use DeepSeek-R1 for reliable JSON output and better reasoning
+        # Use OpenAI GPT-4o via Replicate for reliable JSON output and better reasoning
         self.replicate_token = Config.REPLICATE_API_TOKEN
-        # DeepSeek-R1 has native JSON mode support
-        self.llm_model = "deepseek-ai/deepseek-r1"
+        self.llm_model = "openai/gpt-4o"
 
         if not self.replicate_token:
             logger.warning("No REPLICATE_API_TOKEN found - AI features will be limited")
@@ -185,20 +184,19 @@ class AIChatHandler:
             context = f"Audio duration: {transcription_data.get('duration', 'unknown')}s" if transcription_data else "No transcription available"
 
             # Call GPT-4 to analyze intent
-            # Use Replicate LLaMA 3.1 70B for intent detection
             prompt = f"{self.god_mode_prompt}\n\nContext: {context}\n\nUser request: {message}\n\nAnalyze the user's intent and respond with ONLY a JSON object (no markdown, no explanation)."
 
             output = replicate.run(
                 self.llm_model,
                 input={
-                    "prompt": prompt,
+                    "prompt": f"{self.god_mode_prompt}\n\nContext: {context}\n\nUser request: {message}\n\nAnalyze the user's intent and respond with ONLY a JSON object (no markdown, no explanation).",
                     "max_tokens": 2048,
                     "temperature": 0.1,
                     "top_p": 1.0
                 }
             )
 
-            # Replicate returns an iterator, concatenate all chunks
+            # Replicate returns an iterator, concatenate to get full response
             response_text = "".join(output).strip()
 
             # Remove markdown code blocks if present
@@ -640,21 +638,20 @@ Return ONLY valid JSON array (no markdown code blocks, no explanations).
 """
 
         try:
-            # Use Replicate LLaMA 3.1 70B for segment analysis
+            # Use OpenAI GPT-4o via Replicate for segment analysis
             system_message = "You are an expert video editor. Respond ONLY with valid JSON, no markdown formatting."
-            full_prompt = f"{system_message}\n\n{prompt}"
 
             output = replicate.run(
                 self.llm_model,
                 input={
-                    "prompt": full_prompt,
+                    "prompt": f"{system_message}\n\n{prompt}",
                     "max_tokens": 2048,
                     "temperature": 0.1,
                     "top_p": 1.0
                 }
             )
 
-            # Replicate returns an iterator, concatenate all chunks
+            # Replicate returns an iterator, concatenate to get full response
             response_text = "".join(output).strip()
 
             # Remove markdown code blocks if present
@@ -694,7 +691,7 @@ Return ONLY valid JSON array (no markdown code blocks, no explanations).
                         retry_output = replicate.run(
                             self.llm_model,
                             input={
-                                "prompt": retry_prompt,
+                                "prompt": f"You are a professional video editor analyzing content for Instagram Reels. Return ONLY valid JSON array with no markdown formatting.\n\n{retry_prompt}",
                                 "max_tokens": 1500,
                                 "temperature": 0.4,
                                 "top_p": 0.9

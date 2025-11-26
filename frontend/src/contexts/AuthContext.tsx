@@ -41,7 +41,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:5000' : 'http://localhost:5000';
+const API_BASE_URL = import.meta.env.DEV ? '/api' : 'http://localhost:5000';
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [tokens, setTokens] = useState<AuthTokens | null>(null);

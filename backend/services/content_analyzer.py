@@ -24,8 +24,8 @@ class ContentAnalyzer:
 
     def __init__(self):
         self.replicate_token = Config.REPLICATE_API_TOKEN
-        # Use DeepSeek-R1 for analysis
-        self.llm_model = "deepseek-ai/deepseek-r1"
+        # Use OpenAI GPT-4o via Replicate for analysis
+        self.llm_model = "openai/gpt-4o"
 
         if not self.replicate_token:
             logger.warning("No REPLICATE_API_TOKEN found - content analysis will be limited")
@@ -57,10 +57,10 @@ class ContentAnalyzer:
 
             # Use LLM to analyze if available
             if not self.replicate_token:
-                logger.warning("Replicate token not available, returning basic analysis")
+                logger.warning("Replicate API token not available, returning basic analysis")
                 return self._basic_analysis(transcription_data)
 
-            # Call DeepSeek for intelligent analysis
+            # Call OpenAI GPT-4o via Replicate for intelligent analysis
             knowledge_base = self._analyze_with_llm(transcript, transcription_data)
 
             logger.info(f"✅ Content analysis complete: {knowledge_base.get('main_topic', 'Unknown topic')}")
@@ -91,13 +91,13 @@ class ContentAnalyzer:
         return "\n".join(transcript_parts)
 
     def _analyze_with_llm(self, transcript: str, transcription_data: Dict) -> Dict[str, Any]:
-        """Use DeepSeek to analyze content structure"""
+        """Use OpenAI GPT-4o via Replicate to analyze content structure"""
 
         # Calculate video duration
         segments = transcription_data.get('segments', [])
         total_duration = max(s.get('end', 0) for s in segments) if segments else 0
 
-        # Limit transcript length for analysis (DeepSeek context limit)
+        # Limit transcript length for analysis (GPT-4 context limit)
         if len(transcript) > 50000:
             logger.info(f"Transcript too long ({len(transcript)} chars), sampling evenly")
             transcript = self._sample_transcript_evenly(transcript, transcription_data, 50000)
@@ -143,19 +143,19 @@ Respond with ONLY valid JSON (no markdown code blocks, no explanations).
 """
 
         try:
-            logger.info("Calling DeepSeek-R1 for content analysis...")
+            logger.info("Calling OpenAI GPT-4o via Replicate for content analysis...")
 
             output = replicate.run(
                 self.llm_model,
                 input={
-                    "prompt": analysis_prompt,
+                    "prompt": f"You are an expert video content analyst. Return ONLY valid JSON with no markdown formatting.\n\n{analysis_prompt}",
                     "max_tokens": 4096,
                     "temperature": 0.2,
                     "top_p": 1.0
                 }
             )
 
-            # Concatenate response
+            # Get response text
             response_text = "".join(output).strip()
 
             # Remove markdown code blocks if present
@@ -165,8 +165,7 @@ Respond with ONLY valid JSON (no markdown code blocks, no explanations).
                     response_text = response_text[4:]
                 response_text = response_text.strip()
 
-            # DeepSeek-R1 sometimes wraps response in <think> tags or adds explanations
-            # Extract JSON from response
+            # Extract JSON from response (in case of any wrapper text)
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
 

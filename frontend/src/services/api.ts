@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { ProcessingJob, ProcessingOptions, UploadResponse, ProcessingResponse } from '../types';
 
-const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:5000' : 'http://localhost:5000';
+const API_BASE_URL = import.meta.env.DEV ? '/api' : 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -126,6 +126,66 @@ export interface UploadProgress {
   estimatedTimeRemaining: number; // seconds
 }
 
+// Simple upload endpoint for speed testing (NO middleware, NO interceptors)
+export const simpleUploadFiles = async (
+  audioFile: File,
+  drtFile: File,
+  onProgress?: (progress: UploadProgress) => void
+): Promise<UploadResponse> => {
+  // Create a bare axios instance WITHOUT interceptors
+  const simpleAxios = axios.create({
+    baseURL: API_BASE_URL,
+    timeout: 300000,
+    // NO interceptors, NO auth headers
+  });
+
+  const formData = new FormData();
+  formData.append('audio', audioFile);
+  formData.append('drt', drtFile);
+
+  let startTime = Date.now();
+  let lastLoaded = 0;
+  let lastTime = startTime;
+
+  const response = await simpleAxios.post<UploadResponse>('/simple-upload', formData, {
+    onUploadProgress: (progressEvent) => {
+      if (progressEvent.total && onProgress) {
+        const currentTime = Date.now();
+        const timeElapsed = (currentTime - lastTime) / 1000; // seconds
+        const bytesUploaded = progressEvent.loaded - lastLoaded;
+
+        // Calculate upload speed (MB/s)
+        const uploadSpeed = timeElapsed > 0
+          ? (bytesUploaded / (1024 * 1024)) / timeElapsed
+          : 0;
+
+        // Calculate percentage
+        const percentage = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+
+        // Calculate ETA
+        const bytesRemaining = progressEvent.total - progressEvent.loaded;
+        const estimatedTimeRemaining = uploadSpeed > 0
+          ? Math.ceil(bytesRemaining / (uploadSpeed * 1024 * 1024))
+          : 0;
+
+        onProgress({
+          percentage,
+          uploadedBytes: progressEvent.loaded,
+          totalBytes: progressEvent.total,
+          uploadSpeed,
+          estimatedTimeRemaining,
+        });
+
+        lastLoaded = progressEvent.loaded;
+        lastTime = currentTime;
+      }
+    },
+  });
+
+  return response.data;
+};
+
+// Regular upload endpoint (WITH middleware)
 export const uploadFiles = async (
   audioFile: File,
   drtFile: File,
@@ -140,9 +200,6 @@ export const uploadFiles = async (
   let lastTime = startTime;
 
   const response = await api.post<UploadResponse>('/upload', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
     onUploadProgress: (progressEvent) => {
       if (progressEvent.total && onProgress) {
         const currentTime = Date.now();

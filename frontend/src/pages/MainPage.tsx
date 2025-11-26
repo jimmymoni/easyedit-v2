@@ -101,13 +101,26 @@ const MainPage: React.FC = () => {
   };
 
   const handleUploadAndProcess = async () => {
-    if (!audioFile || !drtFile) return;
+    console.log('[Upload] Button clicked', {
+      audioFile: audioFile?.name,
+      drtFile: drtFile?.name,
+      isUploading,
+      isPolling,
+      isAuthenticated
+    });
+
+    if (!audioFile || !drtFile) {
+      console.error('[Upload] Missing files - blocked');
+      alert('Please select both audio and timeline files before uploading.');
+      return;
+    }
 
     setIsUploading(true);
     setUploadProgress(null);
     setUploadComplete(false);
 
     try {
+      console.log('[Upload] Starting upload...');
       // Upload files with progress tracking
       const uploadResponse = await api.uploadFiles(
         audioFile,
@@ -116,7 +129,7 @@ const MainPage: React.FC = () => {
           setUploadProgress(progress);
         }
       );
-      console.log('Upload successful:', uploadResponse);
+      console.log('[Upload] Upload successful:', uploadResponse);
 
       // Mark upload as complete
       setUploadComplete(true);
@@ -142,9 +155,15 @@ const MainPage: React.FC = () => {
       setDrtFile(null);
 
     } catch (error: any) {
-      console.error('Upload or processing failed:', error);
+      console.error('[Upload] Full error details:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        config: error.config,
+      });
       const errorMessage = error.response?.data?.error || error.message || 'Unknown error';
-      alert(`Upload or processing failed: ${errorMessage}\n\nPlease try again.`);
+      alert(`Upload failed: ${errorMessage}\n\nStatus: ${error.response?.status || 'N/A'}\n\nCheck console for details.`);
     } finally {
       setIsUploading(false);
       setUploadProgress(null);
