@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 
 # Import our services
 from config import Config
-from parsers.drt_parser import DRTParser
-from parsers.drt_writer import DRTWriter
+from parsers.xml_parser import FCP7XMLParser
+from parsers.xml_writer import FCP7XMLWriter
 from services.transcription_service import TranscriptionServiceFactory
 try:
     from services.audio_analyzer import AudioAnalyzer
@@ -46,8 +46,14 @@ app = Flask(__name__)
 app.config.from_object(Config)
 Config.init_app(app)
 
-# Enable CORS for frontend integration
-CORS(app, origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5173"])
+# Enable CORS for frontend integration with credentials support
+CORS(app,
+    origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5173"],
+    supports_credentials=True,           # CRITICAL: Required for Authorization header
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["Content-Type"],
+    max_age=3600  # Cache preflight for 1 hour
+)
 
 # Setup production features
 setup_error_handlers(app)
@@ -111,7 +117,7 @@ def cleanup_old_jobs():
             job = processing_jobs.pop(job_id, None)
             if job:
                 # Clean up associated files
-                for file_key in ["audio_file", "drt_file", "output_file"]:
+                for file_key in ["audio_file", "timeline_file", "output_file"]:
                     file_path = job.get(file_key)
                     if file_path and os.path.exists(file_path):
                         try:
@@ -230,45 +236,157 @@ def get_metrics():
     """Get system metrics for monitoring"""
     return jsonify(system_monitor.export_metrics())
 
+# ==============================================================================
+# SIMPLE UPLOAD ENDPOINT - NO MIDDLEWARE (DEBUGGING)
+# ==============================================================================
+@app.route('/simple-upload', methods=['POST', 'OPTIONS'])
+def simple_upload():
+    """
+    BARE MINIMUM UPLOAD - FOR SPEED TESTING
+    NO authentication, NO rate limiting, NO validation, NO error handling
+    This endpoint exists to test if middleware is causing slowness
+    """
+    import sys
+    print("[SIMPLE-UPLOAD] === FUNCTION CALLED ===", flush=True)
+    sys.stdout.flush()
+
+    if request.method == 'OPTIONS':
+        print("[SIMPLE-UPLOAD] OPTIONS request", flush=True)
+        return '', 200
+
+    try:
+        # DEBUG
+        print(f"[SIMPLE-UPLOAD] Content-Type: {request.content_type}", flush=True)
+        print(f"[SIMPLE-UPLOAD] Files keys: {list(request.files.keys())}")
+        print(f"[SIMPLE-UPLOAD] Form keys: {list(request.form.keys())}")
+        print(f"[SIMPLE-UPLOAD] Files dict: {dict(request.files)}")
+
+        # Get files directly
+        audio = request.files.get('audio')
+        timeline = request.files.get('timeline')
+
+        print(f"[SIMPLE-UPLOAD] Audio: {audio}, Timeline: {timeline}")
+
+        if not audio or not timeline:
+            return jsonify({"error": "Missing files", "debug": {
+                "files_keys": list(request.files.keys()),
+                "content_type": request.content_type
+            }}), 400
+
+        # Generate simple ID
+        job_id = str(uuid.uuid4())
+
+        # Ensure uploads directory exists
+        os.makedirs('uploads', exist_ok=True)
+
+        # Save files immediately - NO validation, NO sanitization
+        audio_path = os.path.join('uploads', f"{job_id}_audio.wav")
+        timeline_path = os.path.join('uploads', f"{job_id}_timeline.xml")
+
+        audio.save(audio_path)
+        timeline.save(timeline_path)
+
+        # Register job in processing_jobs dictionary (required by /process/ endpoint)
+        processing_jobs[job_id] = {
+            'job_id': job_id,
+            'audio_file': audio_path,
+            'timeline_file': timeline_path,
+            'status': 'uploaded',
+            'created_at': datetime.now().isoformat()
+        }
+
+        # Also register in job manager for tracking
+        job_manager.update_job_status(
+            job_id=job_id,
+            status='uploaded',
+            progress=0,
+            message='Files uploaded successfully - ready for processing'
+        )
+
+        # Store file paths in job data for later retrieval
+        job_data = job_manager._get_job_data(job_id)
+        job_data['audio_file'] = audio_path
+        job_data['timeline_file'] = timeline_path
+        job_data['type'] = 'simple_upload'
+        job_manager._store_job_data(job_id, job_data)
+        print(f"[SIMPLE-UPLOAD] Job registered in job manager: {job_id}", flush=True)
+
+        response_data = {
+            "job_id": job_id,
+            "message": "Files uploaded successfully",
+            "audio_filename": audio.filename,
+            "timeline_filename": timeline.filename
+        }
+        print(f"[SIMPLE-UPLOAD] Returning response: {response_data}", flush=True)
+
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ==============================================================================
+# REGULAR UPLOAD ENDPOINT (WITH MIDDLEWARE)
+# ==============================================================================
 @app.route('/upload', methods=['POST'])
 @require_auth()
 @require_rate_limit("5 per minute, 50 per hour")
 @error_handler
 def upload_files():
-    """Upload audio and DRT files for processing"""
+    """Upload audio and FCP7 XML timeline files for processing"""
     start_time = time.time()
 
     try:
+        # DEBUG: Log what we're receiving
+        logger.info(f"Upload request - Files keys: {list(request.files.keys())}")
+        logger.info(f"Upload request - Form keys: {list(request.form.keys())}")
+        logger.info(f"Upload request - Content-Type: {request.content_type}")
+        logger.info(f"Upload request - All files: {dict(request.files)}")
+
         # Check for required files
         audio_file = request.files.get('audio')
-        drt_file = request.files.get('drt')
+        timeline_file = request.files.get('timeline')
+
+        logger.info(f"Audio file object: {audio_file}")
+        logger.info(f"Timeline file object: {timeline_file}")
+
+        if audio_file:
+            logger.info(f"Audio file - filename: {audio_file.filename}, content_type: {audio_file.content_type}")
+        if timeline_file:
+            logger.info(f"Timeline file - filename: {timeline_file.filename}, content_type: {timeline_file.content_type}")
 
         # Validate files using production validation
         validate_file_upload(audio_file, Config.ALLOWED_AUDIO_EXTENSIONS, Config.MAX_FILE_SIZE_MB)
-        validate_file_upload(drt_file, Config.ALLOWED_DRT_EXTENSIONS, Config.MAX_FILE_SIZE_MB)
+        validate_file_upload(timeline_file, Config.ALLOWED_TIMELINE_EXTENSIONS, Config.MAX_FILE_SIZE_MB)
+
+        # Explicit rejection of .drt files
+        if timeline_file and timeline_file.filename.lower().endswith('.drt'):
+            return jsonify({
+                'error': 'Invalid file format',
+                'message': '.drt files are not supported. Please export your timeline as Final Cut Pro 7 XML (.xml) format.'
+            }), 400
 
         # Generate job ID
         job_id = generate_job_id()
 
         # Save uploaded files with additional sanitization
         audio_clean_name = sanitize_filename(audio_file.filename)
-        drt_clean_name = sanitize_filename(drt_file.filename)
+        timeline_clean_name = sanitize_filename(timeline_file.filename)
 
         audio_filename = secure_filename(f"{job_id}_audio_{audio_clean_name}")
-        drt_filename = secure_filename(f"{job_id}_drt_{drt_clean_name}")
+        timeline_filename = secure_filename(f"{job_id}_timeline_{timeline_clean_name}")
 
         audio_path = os.path.join(Config.UPLOAD_FOLDER, audio_filename)
-        drt_path = os.path.join(Config.UPLOAD_FOLDER, drt_filename)
+        timeline_path = os.path.join(Config.UPLOAD_FOLDER, timeline_filename)
 
         audio_file.save(audio_path)
-        drt_file.save(drt_path)
+        timeline_file.save(timeline_path)
 
         # Initialize job tracking
         processing_jobs[job_id] = {
             "status": "uploaded",
             "created_at": datetime.now(),
             "audio_file": audio_path,
-            "drt_file": drt_path,
+            "timeline_file": timeline_path,
             "progress": 10,
             "message": "Files uploaded successfully"
         }
@@ -280,14 +398,14 @@ def upload_files():
         log_performance("file_upload", duration, {
             "job_id": job_id,
             "audio_size": audio_file.content_length or 0,
-            "drt_size": drt_file.content_length or 0
+            "timeline_size": timeline_file.content_length or 0
         })
 
         return jsonify({
             "job_id": job_id,
             "message": "Files uploaded successfully",
             "audio_filename": audio_file.filename,
-            "drt_filename": drt_file.filename
+            "timeline_filename": timeline_file.filename
         })
 
     except Exception as e:
@@ -310,8 +428,10 @@ def process_timeline(job_id):
 
         job = processing_jobs[job_id]
 
-        if job["status"] != "uploaded":
-            return jsonify({"error": f"Job status is {job['status']}, cannot process"}), 400
+        # Allow multiple valid statuses for processing
+        allowed_statuses = ["uploaded", "ready", "queued"]
+        if job["status"] not in allowed_statuses:
+            return jsonify({"error": f"Job status is {job['status']}, expected one of {allowed_statuses}"}), 400
 
         # Get and validate processing options from request
         options = validate_json_request(request)
@@ -321,7 +441,7 @@ def process_timeline(job_id):
         task_id = job_manager.submit_timeline_processing(
             job_id=job_id,
             audio_file_path=job["audio_file"],
-            drt_file_path=job["drt_file"],
+            timeline_file_path=job["timeline_file"],
             options=options
         )
 
@@ -410,8 +530,10 @@ def process_shortform(job_id):
 
         job = processing_jobs[job_id]
 
-        if job["status"] != "uploaded":
-            return jsonify({"error": f"Job status is {job['status']}, cannot process"}), 400
+        # Allow multiple valid statuses for processing
+        allowed_statuses = ["uploaded", "ready", "queued"]
+        if job["status"] not in allowed_statuses:
+            return jsonify({"error": f"Job status is {job['status']}, expected one of {allowed_statuses}"}), 400
 
         # Get and validate options from request
         options = validate_json_request(request)
@@ -439,7 +561,7 @@ def process_shortform(job_id):
         from tasks.shortform_processing import process_shortform_content
 
         task = process_shortform_content.apply_async(
-            args=[job_id, job["audio_file"], job["drt_file"], prompt_type, target_duration, language_code],
+            args=[job_id, job["audio_file"], job["timeline_file"], prompt_type, target_duration, language_code],
             task_id=f"shortform_{job_id}"
         )
 
@@ -583,7 +705,7 @@ def get_job_status(job_id):
 @require_rate_limit("10 per minute, 100 per hour")
 @error_handler
 def download_result(job_id):
-    """Download processed DRT file"""
+    """Download processed FCP7 XML file"""
     try:
         # Validate job ID
         job_id = validate_job_id(job_id)
@@ -613,7 +735,7 @@ def download_result(job_id):
         return send_file(
             output_file,
             as_attachment=True,
-            download_name=f"edited_timeline_{job_id}.drt",
+            download_name=f"edited_timeline_{job_id}.xml",
             mimetype='application/xml'
         )
 
@@ -755,17 +877,17 @@ def ai_edit_timeline():
             return jsonify({"error": "Job must be completed before AI editing"}), 400
 
         # Get timeline data (would load from processed result)
-        from parsers.drt_parser import DRTParser
-        from parsers.drt_writer import DRTWriter
+        from parsers.xml_parser import FCP7XMLParser
+        from parsers.xml_writer import FCP7XMLWriter
         from services.ai_editor import AITimelineEditor
 
-        drt_file = job_status.get("drt_file")
-        if not drt_file or not os.path.exists(drt_file):
+        timeline_file = job_status.get("timeline_file")
+        if not timeline_file or not os.path.exists(timeline_file):
             return jsonify({"error": "Timeline file not found"}), 404
 
         # Parse original timeline
-        parser = DRTParser()
-        timeline = parser.parse_file(drt_file)
+        parser = FCP7XMLParser()
+        timeline = parser.parse_file(timeline_file)
 
         # Load transcription data if available
         transcription_data = job_status.get("result", {}).get("transcription")
@@ -787,10 +909,10 @@ def ai_edit_timeline():
 
         # Save edited timeline to disk
         edited_timeline = result.get('timeline')
-        output_filename = f"{job_id}_ai_edited.drt"
+        output_filename = f"{job_id}_ai_edited.xml"
         output_path = os.path.join(Config.TEMP_FOLDER, output_filename)
 
-        writer = DRTWriter()
+        writer = FCP7XMLWriter()
         if writer.write_timeline(edited_timeline, output_path):
             # Generate edited audio file from the edited timeline
             from services.audio_extractor import AudioExtractor
@@ -872,16 +994,16 @@ def ai_chat():
             return jsonify({"error": "Job must be completed before using AI chat"}), 400
 
         # Get timeline data
-        from parsers.drt_parser import DRTParser
+        from parsers.xml_parser import FCP7XMLParser
         from services.ai_chat_handler import AIChatHandler
 
-        drt_file = job_status.get("drt_file")
-        if not drt_file or not os.path.exists(drt_file):
+        timeline_file = job_status.get("timeline_file")
+        if not timeline_file or not os.path.exists(timeline_file):
             return jsonify({"error": "Timeline file not found"}), 404
 
         # Parse timeline
-        parser = DRTParser()
-        timeline = parser.parse_file(drt_file)
+        parser = FCP7XMLParser()
+        timeline = parser.parse_file(timeline_file)
 
         # Load transcription data if available
         transcription_data = job_status.get("result", {}).get("transcription")
@@ -1135,16 +1257,16 @@ def ai_preview():
             return jsonify({"error": "Job must be completed before preview"}), 400
 
         # Get timeline data
-        from parsers.drt_parser import DRTParser
+        from parsers.xml_parser import FCP7XMLParser
         from services.ai_chat_handler import AIChatHandler
 
-        drt_file = job_status.get("drt_file")
-        if not drt_file or not os.path.exists(drt_file):
+        timeline_file = job_status.get("timeline_file")
+        if not timeline_file or not os.path.exists(timeline_file):
             return jsonify({"error": "Timeline file not found"}), 404
 
         # Parse timeline
-        parser = DRTParser()
-        timeline = parser.parse_file(drt_file)
+        parser = FCP7XMLParser()
+        timeline = parser.parse_file(timeline_file)
 
         # Load transcription data if available
         transcription_data = job_status.get("result", {}).get("transcription")
@@ -1286,26 +1408,26 @@ def get_timeline_comparison(job_id):
             return jsonify({"error": "Job must be completed before comparison"}), 400
 
         # Get original and edited timeline files
-        from parsers.drt_parser import DRTParser
+        from parsers.xml_parser import FCP7XMLParser
 
-        original_drt = job_status.get("drt_file")
+        original_timeline_file = job_status.get("timeline_file")
         # Check for AI edited timeline first, fallback to processed timeline
-        edited_drt = (
+        edited_timeline_file = (
             job_status.get("result", {}).get("ai_edited_output_file") or
             job_status.get("result", {}).get("output_file")
         )
 
-        if not original_drt or not os.path.exists(original_drt):
+        if not original_timeline_file or not os.path.exists(original_timeline_file):
             return jsonify({"error": "Original timeline file not found"}), 404
 
         # Parse original timeline
-        parser = DRTParser()
-        original_timeline = parser.parse_file(original_drt)
+        parser = FCP7XMLParser()
+        original_timeline = parser.parse_file(original_timeline_file)
 
         # Parse edited timeline (if exists)
         edited_timeline = None
-        if edited_drt and os.path.exists(edited_drt):
-            edited_timeline = parser.parse_file(edited_drt)
+        if edited_timeline_file and os.path.exists(edited_timeline_file):
+            edited_timeline = parser.parse_file(edited_timeline_file)
 
         # Generate comparison data
         comparison = generate_timeline_comparison(original_timeline, edited_timeline)
@@ -1564,8 +1686,10 @@ def get_processing_preview(job_id):
 
     job = processing_jobs[job_id]
 
-    if job["status"] != "uploaded":
-        return jsonify({"error": "Preview only available for uploaded jobs"}), 400
+    # Allow multiple valid statuses for preview
+    allowed_statuses = ["uploaded", "ready", "queued"]
+    if job["status"] not in allowed_statuses:
+        return jsonify({"error": f"Preview only available for jobs in status: {allowed_statuses}"}), 400
 
     try:
         # Use the timeline editing engine to get preview
@@ -1574,7 +1698,7 @@ def get_processing_preview(job_id):
         timeline_editor = TimelineEditingEngine()
         preview = timeline_editor.get_processing_preview(
             job["audio_file"],
-            job["drt_file"]
+            job["timeline_file"]
         )
 
         return jsonify({
