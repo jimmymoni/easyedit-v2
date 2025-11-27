@@ -6,49 +6,80 @@ import re
 import tempfile
 from typing import Dict, Any, Optional
 from models.timeline import Timeline, Track, Clip
+from parsers.canonical_extractor import extract_canonical_file_block
 import logging
 
 from utils.error_handlers import ValidationError, ProcessingError
 
 logger = logging.getLogger(__name__)
 
-class DRTParser:
-    """Parser for DaVinci Resolve Timeline (.drt) files"""
+class FCP7XMLParser:
+    """Parser for Final Cut Pro 7 XML (.xml) timeline files"""
 
     def __init__(self):
         self.timeline = None
 
     def parse_file(self, file_path: str) -> Timeline:
-        """Parse a .drt file and return a Timeline object with automatic encoding detection and ZIP support"""
+        """Parse an FCP7 XML file and return a Timeline object with automatic encoding detection and ZIP support"""
         try:
             if not file_path or not isinstance(file_path, str):
                 raise ValidationError("Invalid file path provided")
 
-            # Check if file is a ZIP archive (DaVinci Resolve exports both XML and ZIP formats)
+            # EXTRACT CANONICAL FILE BLOCK FIRST (before parsing content)
+            canonical_block = None
+            try:
+                # For ZIP files, extract XML to temp file first
+                if self._is_zip_file(file_path):
+                    with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                        if 'project.xml' in zip_ref.namelist():
+                            with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.xml') as temp_file:
+                                temp_path = temp_file.name
+                                with zip_ref.open('project.xml') as source:
+                                    temp_file.write(source.read().decode('utf-8'))
+
+                            canonical_block = extract_canonical_file_block(temp_path)
+                            os.remove(temp_path)  # Cleanup
+                else:
+                    canonical_block = extract_canonical_file_block(file_path)
+
+                if canonical_block:
+                    logger.info(f"Extracted canonical file block: ID={canonical_block['file_id']}, name={canonical_block['name']}")
+            except Exception as e:
+                logger.warning(f"Failed to extract canonical file block: {e}")
+                canonical_block = None
+
+            # Check if file is a ZIP archive (some NLEs export both XML and ZIP formats)
             if self._is_zip_file(file_path):
-                logger.info("Detected ZIP-format DRT file, extracting project.xml")
+                logger.info("Detected ZIP-format timeline file, extracting project.xml")
                 content = self._extract_xml_from_zip(file_path)
             else:
                 # Read file with automatic encoding detection
                 content = self._read_file_with_encoding_detection(file_path)
 
             if not content.strip():
-                raise ValidationError("DRT file is empty")
+                raise ValidationError("Timeline XML file is empty")
 
-            return self.parse_content(content)
+            timeline = self.parse_content(content)
+
+            # Attach canonical block to timeline
+            if canonical_block and timeline:
+                timeline.set_canonical_file_block(canonical_block)
+                logger.info(f"Attached canonical file block to timeline")
+
+            return timeline
 
         except FileNotFoundError:
-            logger.error(f"DRT file not found: {file_path}")
-            raise ValidationError(f"DRT file not found: {file_path}")
+            logger.error(f"Timeline XML file not found: {file_path}")
+            raise ValidationError(f"Timeline XML file not found: {file_path}")
         except PermissionError:
-            logger.error(f"Permission denied reading DRT file: {file_path}")
-            raise ValidationError(f"Permission denied reading DRT file: {file_path}")
+            logger.error(f"Permission denied reading timeline XML file: {file_path}")
+            raise ValidationError(f"Permission denied reading timeline XML file: {file_path}")
         except (ValidationError, ProcessingError):
             # Re-raise our custom errors
             raise
         except Exception as e:
-            logger.exception(f"Unexpected error parsing .drt file {file_path}")
-            raise ProcessingError(f"Failed to parse DRT file: {str(e)}")
+            logger.exception(f"Unexpected error parsing timeline XML file {file_path}")
+            raise ProcessingError(f"Failed to parse timeline XML file: {str(e)}")
 
     def _read_file_with_encoding_detection(self, file_path: str) -> str:
         """Read file with automatic encoding detection, trying multiple encodings"""
@@ -61,7 +92,7 @@ class DRTParser:
             try:
                 with open(file_path, 'r', encoding=encoding) as file:
                     content = file.read()
-                    logger.info(f"Successfully read DRT file with {encoding} encoding")
+                    logger.info(f"Successfully read XML file with {encoding} encoding")
                     return content
             except UnicodeDecodeError as e:
                 last_error = e
@@ -75,11 +106,11 @@ class DRTParser:
         try:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as file:
                 content = file.read()
-                logger.warning(f"Read DRT file with UTF-8 and character replacement (some characters may be corrupted)")
+                logger.warning(f"Read XML file with UTF-8 and character replacement (some characters may be corrupted)")
                 return content
         except Exception as e:
-            logger.error(f"Failed to read DRT file with all encoding attempts: {str(e)}")
-            raise ValidationError(f"DRT file contains invalid encoding. Tried: {', '.join(encodings_to_try)}. Last error: {str(last_error)}")
+            logger.error(f"Failed to read XML file with all encoding attempts: {str(e)}")
+            raise ValidationError(f"Timeline XML file contains invalid encoding. Tried: {', '.join(encodings_to_try)}. Last error: {str(last_error)}")
 
     def _is_zip_file(self, file_path: str) -> bool:
         """Check if file is a ZIP archive by reading magic bytes"""
@@ -93,7 +124,7 @@ class DRTParser:
             return False
 
     def _extract_xml_from_zip(self, zip_path: str) -> str:
-        """Extract project.xml from DRT ZIP archive with security checks"""
+        """Extract project.xml from timeline ZIP archive with security checks"""
         try:
             if not zipfile.is_zipfile(zip_path):
                 raise ValidationError("File appears to be ZIP but is not a valid ZIP archive")
@@ -108,7 +139,7 @@ class DRTParser:
                 xml_files = [name for name in zip_file.namelist() if name.endswith('.xml')]
 
                 if not xml_files:
-                    raise ValidationError("No XML files found in DRT ZIP archive")
+                    raise ValidationError("No XML files found in timeline ZIP archive")
 
                 # Prefer 'project.xml', otherwise use first XML file
                 xml_filename = 'project.xml' if 'project.xml' in xml_files else xml_files[0]
@@ -117,7 +148,7 @@ class DRTParser:
                 if '..' in xml_filename or xml_filename.startswith('/'):
                     raise ValidationError("Invalid filename in ZIP archive")
 
-                logger.info(f"Extracting {xml_filename} from DRT ZIP archive")
+                logger.info(f"Extracting {xml_filename} from timeline ZIP archive")
 
                 # Read XML content
                 with zip_file.open(xml_filename) as xml_file:
@@ -148,7 +179,7 @@ class DRTParser:
             raise ProcessingError(f"Failed to extract XML from ZIP archive: {str(e)}")
 
     def parse_content(self, xml_content: str) -> Timeline:
-        """Parse .drt XML content and return a Timeline object"""
+        """Parse FCP7 XML content and return a Timeline object"""
         try:
             if not xml_content or not isinstance(xml_content, str):
                 raise ValidationError("Invalid XML content provided")
@@ -180,16 +211,28 @@ class DRTParser:
 
             # Secure XML parsing with defusedxml (automatic XXE protection)
             root = ET.fromstring(xml_content)
+
+            # Validate FCP7 XML format
+            if root.tag != 'xmeml':
+                raise ValidationError(
+                    f"Invalid timeline XML format. Expected <xmeml> root element, got <{root.tag}>. "
+                    "Please export your timeline as Final Cut Pro 7 XML format."
+                )
+
+            version = root.get('version')
+            if version != '5':
+                logger.warning(f"Timeline XML version is '{version}', expected '5' (FCP7). Attempting to parse anyway.")
+
             data = self._xml_to_dict(root)
 
             # Extract timeline information
             timeline_data = self._extract_timeline_data(data)
             if not timeline_data:
-                raise ProcessingError("No valid timeline data found in DRT file")
+                raise ProcessingError("No valid timeline data found in XML file")
 
             timeline = self._create_timeline_from_data(timeline_data)
             if not timeline:
-                raise ProcessingError("Failed to create timeline from DRT data")
+                raise ProcessingError("Failed to create timeline from XML data")
 
             self.timeline = timeline
             return timeline
@@ -201,8 +244,8 @@ class DRTParser:
             # Re-raise our custom errors
             raise
         except Exception as e:
-            logger.exception(f"Unexpected error parsing .drt content")
-            raise ProcessingError(f"Failed to parse DRT content: {str(e)}")
+            logger.exception(f"Unexpected error parsing timeline XML content")
+            raise ProcessingError(f"Failed to parse timeline XML content: {str(e)}")
 
     def _xml_to_dict(self, element) -> Dict[str, Any]:
         """Convert XML element to dictionary (secure replacement for xmltodict)"""
