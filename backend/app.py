@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 from werkzeug.utils import secure_filename
 import os
 import uuid
@@ -47,13 +47,7 @@ app.config.from_object(Config)
 Config.init_app(app)
 
 # Enable CORS for frontend integration with credentials support
-CORS(app,
-    origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5173"],
-    supports_credentials=True,           # CRITICAL: Required for Authorization header
-    allow_headers=["Content-Type", "Authorization"],
-    expose_headers=["Content-Type"],
-    max_age=3600  # Cache preflight for 1 hour
-)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 # Setup production features
 setup_error_handlers(app)
@@ -240,6 +234,12 @@ def get_metrics():
 # SIMPLE UPLOAD ENDPOINT - NO MIDDLEWARE (DEBUGGING)
 # ==============================================================================
 @app.route('/simple-upload', methods=['POST', 'OPTIONS'])
+@cross_origin(
+    origins="*",
+    methods=["POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    supports_credentials=True
+)
 def simple_upload():
     """
     BARE MINIMUM UPLOAD - FOR SPEED TESTING
