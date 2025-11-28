@@ -76,6 +76,7 @@ class Timeline:
     markers: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
+    canonical_file_block: Optional[Dict[str, Any]] = None  # Preserve original file metadata for DaVinci Resolve import
 
     def add_track(self, track: Track) -> None:
         """Add a track to the timeline"""
@@ -138,3 +139,14 @@ class Timeline:
             "frame_rate": self.frame_rate,
             "sample_rate": self.sample_rate
         }
+
+    def set_canonical_file_block(self, file_block: Dict[str, Any]) -> None:
+        """Set and validate canonical file block for DaVinci Resolve import"""
+        required_keys = ['file_id', 'name', 'pathurl']
+        if not all(k in file_block for k in required_keys):
+            raise ValueError(f"Invalid file block: missing required keys {required_keys}")
+        self.canonical_file_block = file_block
+
+    def get_canonical_file_block(self) -> Optional[Dict[str, Any]]:
+        """Get canonical file block for XML generation"""
+        return self.canonical_file_block

@@ -346,6 +346,11 @@ class AITimelineEditor:
             sample_rate=timeline.sample_rate
         )
 
+        # Copy canonical file block (preserves media reference for DaVinci Resolve)
+        if timeline.canonical_file_block:
+            edited_timeline.set_canonical_file_block(timeline.canonical_file_block)
+            logger.info("Copied canonical file block to edited timeline")
+
         # Sort ranges by start time
         sorted_ranges = sorted(ranges_to_keep, key=lambda r: r['start'])
 
@@ -360,6 +365,14 @@ class AITimelineEditor:
             # Extract clips for each kept range
             current_timeline_time = 0.0
 
+            # Get canonical file name to preserve media reference for DaVinci Resolve
+            canonical_name = (
+                timeline.canonical_file_block['name']
+                if timeline.canonical_file_block
+                else original_track.clips[0].name if original_track.clips
+                else "unknown_media"
+            )
+
             for keep_range in sorted_ranges:
                 range_start = keep_range['start']
                 range_end = keep_range['end']
@@ -368,8 +381,9 @@ class AITimelineEditor:
                 # FIX: Create ONE clip per transcript segment using direct audio timestamps
                 # instead of iterating through all overlapping timeline clips.
                 # This prevents duplicating audio when multiple clips overlap with one segment.
+                # CRITICAL: Use canonical file name (not synthetic) so XML writer references canonical file block
                 new_clip = Clip(
-                    name=f"AI_Segment_{len(new_track.clips) + 1}",
+                    name=canonical_name,  # Preserve canonical file name for DaVinci Resolve
                     start_time=current_timeline_time,
                     end_time=current_timeline_time + range_duration,
                     duration=range_duration,
@@ -410,6 +424,11 @@ class AITimelineEditor:
             frame_rate=timeline.frame_rate,
             sample_rate=timeline.sample_rate
         )
+
+        # Copy canonical file block (preserves media reference for DaVinci Resolve)
+        if timeline.canonical_file_block:
+            edited_timeline.set_canonical_file_block(timeline.canonical_file_block)
+            logger.info("Copied canonical file block to edited timeline")
 
         # Sort ranges by start time
         sorted_ranges = sorted(ranges_to_cut, key=lambda r: r['start'])

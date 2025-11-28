@@ -325,6 +325,10 @@ class ConversationMergerService:
             }
         )
 
+        # Preserve canonical file block from original timeline (critical for DaVinci Resolve)
+        if self.original_timeline.canonical_file_block:
+            optimized_timeline.set_canonical_file_block(self.original_timeline.canonical_file_block)
+
         # Add audio track
         audio_track = Track(
             index=1,
@@ -333,11 +337,20 @@ class ConversationMergerService:
         )
         optimized_timeline.add_track(audio_track)
 
+        # Get canonical file name to preserve media reference for DaVinci Resolve
+        canonical_name = (
+            self.original_timeline.canonical_file_block['name']
+            if self.original_timeline.canonical_file_block
+            else (self.original_timeline.tracks[0].clips[0].name
+                  if self.original_timeline.tracks and self.original_timeline.tracks[0].clips
+                  else "unknown_media")
+        )
+
         # Add clips for each selected segment
         current_time = 0.0
         for i, segment in enumerate(selected_segments):
             clip = Clip(
-                name=f"Segment_{i+1}",
+                name=canonical_name,  # Preserve canonical file name for DaVinci Resolve
                 start_time=current_time,
                 end_time=current_time + segment.duration,
                 duration=segment.duration,

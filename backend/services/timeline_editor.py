@@ -4,8 +4,8 @@ from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 
 from models.timeline import Timeline, Track, Clip
-from parsers.drt_parser import DRTParser
-from parsers.drt_writer import DRTWriter
+from parsers.xml_parser import FCP7XMLParser
+from parsers.xml_writer import FCP7XMLWriter
 from services.transcription_service import TranscriptionServiceFactory
 try:
     from services.audio_analyzer import AudioAnalyzer
@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 class TimelineEditingEngine:
     """
     Comprehensive timeline editing engine that coordinates all services
-    to transform raw audio and DRT files into optimized timelines
+    to transform raw audio and FCP7 XML timeline files into optimized timelines
     """
 
     def __init__(self):
-        self.drt_parser = DRTParser()
-        self.drt_writer = DRTWriter()
+        self.xml_parser = FCP7XMLParser()
+        self.xml_writer = FCP7XMLWriter()
         # Transcription service now uses factory pattern
         try:
             self.transcription_service = TranscriptionServiceFactory.create()
@@ -39,14 +39,14 @@ class TimelineEditingEngine:
 
     def process_timeline(self,
                         audio_file_path: str,
-                        drt_file_path: str,
+                        timeline_file_path: str,
                         processing_options: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Main processing pipeline for timeline editing
 
         Args:
             audio_file_path: Path to audio file
-            drt_file_path: Path to DRT timeline file
+            timeline_file_path: Path to FCP7 XML timeline file
             processing_options: Options for processing (transcription, silence removal, etc.)
 
         Returns:
@@ -69,12 +69,12 @@ class TimelineEditingEngine:
             }
 
             # Stage 1: Parse original timeline
-            logger.info("Stage 1: Parsing DRT timeline")
+            logger.info("Stage 1: Parsing FCP7 XML timeline")
             stage_start = datetime.now()
 
-            original_timeline = self.drt_parser.parse_file(drt_file_path)
+            original_timeline = self.xml_parser.parse_file(timeline_file_path)
 
-            self.processing_stats['stages']['drt_parsing'] = {
+            self.processing_stats['stages']['xml_parsing'] = {
                 'duration': (datetime.now() - stage_start).total_seconds(),
                 'success': True,
                 'timeline_duration': original_timeline.duration,
@@ -140,7 +140,7 @@ class TimelineEditingEngine:
             }
 
             # Stage 5: Generate output
-            logger.info("Stage 5: Generating output DRT file")
+            logger.info("Stage 5: Generating output FCP7 XML file")
             stage_start = datetime.now()
 
             output_result = self._generate_output_file(edited_timeline, processing_options)
@@ -194,7 +194,7 @@ class TimelineEditingEngine:
             'silence_threshold_db': Config.SILENCE_THRESHOLD_DB,
             'energy_based_cutting': True,
             'preserve_markers': True,
-            'output_format': 'drt'
+            'output_format': 'xml'
         }
 
     def _perform_audio_analysis(self,
@@ -355,20 +355,20 @@ class TimelineEditingEngine:
     def _generate_output_file(self,
                              timeline: Timeline,
                              options: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate output DRT file"""
+        """Generate output FCP7 XML file"""
         try:
             # Generate unique filename
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"edited_timeline_{timestamp}.drt"
+            filename = f"edited_timeline_{timestamp}.xml"
             output_path = os.path.join(Config.TEMP_FOLDER, filename)
 
             # Write timeline to file
-            success = self.drt_writer.write_timeline(timeline, output_path)
+            success = self.xml_writer.write_timeline(timeline, output_path)
 
             if not success:
                 return {
                     'success': False,
-                    'error': 'Failed to write DRT file'
+                    'error': 'Failed to write FCP7 XML file'
                 }
 
             # Verify file was created and get size
@@ -467,11 +467,11 @@ class TimelineEditingEngine:
 
     def get_processing_preview(self,
                               audio_file_path: str,
-                              drt_file_path: str) -> Dict[str, Any]:
+                              timeline_file_path: str) -> Dict[str, Any]:
         """Get a preview of what processing would do without actually processing"""
         try:
             # Parse timeline
-            timeline = self.drt_parser.parse_file(drt_file_path)
+            timeline = self.xml_parser.parse_file(timeline_file_path)
             timeline_stats = timeline.get_timeline_stats()
 
             # SECURITY: Use context manager for guaranteed cleanup

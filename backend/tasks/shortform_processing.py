@@ -1,6 +1,6 @@
 """
 Short-Form Content Processing Tasks
-Celery tasks for generating short-form content from long-form audio + DRT
+Celery tasks for generating short-form content from long-form audio + FCP7 XML
 """
 
 import logging
@@ -10,8 +10,8 @@ from typing import Dict, Any, Optional
 
 from celery_app import celery_app
 from job_manager import job_manager
-from parsers.drt_parser import DRTParser
-from parsers.drt_writer import DRTWriter
+from parsers.xml_parser import FCP7XMLParser
+from parsers.xml_writer import FCP7XMLWriter
 from services.timeline_chunker import TimelineChunkerService
 from services.speaker_identifier import SpeakerIdentifierService
 from services.conversation_merger import ConversationMergerService
@@ -27,7 +27,7 @@ def process_shortform_content(
     self,
     job_id: str,
     audio_file_path: str,
-    drt_file_path: str,
+    timeline_file_path: str,
     prompt_type: str = "engaging",
     target_duration: float = 60.0,
     language_code: str = "ml-IN"
@@ -38,7 +38,7 @@ def process_shortform_content(
     Args:
         job_id: Job identifier
         audio_file_path: Path to audio file
-        drt_file_path: Path to DRT timeline file
+        timeline_file_path: Path to FCP7 XML timeline file
         prompt_type: Content type (engaging, informative, emotional, etc.)
         target_duration: Target duration for short-form output (seconds)
         language_code: Language for transcription
@@ -55,15 +55,15 @@ def process_shortform_content(
             message='Starting short-form content generation...'
         )
 
-        # STEP 1: Parse DRT timeline (5%)
-        logger.info(f"[{job_id}] Parsing DRT timeline...")
+        # STEP 1: Parse FCP7 XML timeline (5%)
+        logger.info(f"[{job_id}] Parsing FCP7 XML timeline...")
         job_manager.update_job_status(job_id, 'processing', progress=5, message='Parsing timeline...')
 
-        drt_parser = DRTParser()
-        timeline = drt_parser.parse_file(drt_file_path)
+        xml_parser = FCP7XMLParser()
+        timeline = xml_parser.parse_file(timeline_file_path)
 
         if not timeline:
-            raise ValueError("Failed to parse DRT file")
+            raise ValueError("Failed to parse timeline XML file")
 
         logger.info(f"[{job_id}] Timeline parsed: {timeline.duration:.2f}s, {len(timeline.tracks)} tracks")
 
@@ -168,26 +168,26 @@ def process_shortform_content(
             f"{optimized_timeline.duration:.2f}s from {timeline.duration:.2f}s original"
         )
 
-        # STEP 8: Export DRT file (95%)
-        logger.info(f"[{job_id}] Exporting optimized DRT...")
+        # STEP 8: Export FCP7 XML file (95%)
+        logger.info(f"[{job_id}] Exporting optimized FCP7 XML...")
         job_manager.update_job_status(
             job_id, 'processing', progress=95,
-            message='Exporting DRT file...'
+            message='Exporting FCP7 XML file...'
         )
 
         # Create output directory
         output_dir = os.path.join(Config.UPLOAD_FOLDER, job_id)
         os.makedirs(output_dir, exist_ok=True)
 
-        output_drt_path = os.path.join(output_dir, f"{job_id}_shortform.drt")
+        output_xml_path = os.path.join(output_dir, f"{job_id}_shortform.xml")
 
-        drt_writer = DRTWriter()
-        success = drt_writer.write_timeline(optimized_timeline, output_drt_path)
+        xml_writer = FCP7XMLWriter()
+        success = xml_writer.write_timeline(optimized_timeline, output_xml_path)
 
         if not success:
-            raise ValueError("Failed to write DRT file")
+            raise ValueError("Failed to write FCP7 XML file")
 
-        logger.info(f"[{job_id}] DRT exported: {output_drt_path}")
+        logger.info(f"[{job_id}] FCP7 XML exported: {output_xml_path}")
 
         # STEP 9: Prepare result (100%)
         result = {
@@ -196,7 +196,7 @@ def process_shortform_content(
             'original_duration': timeline.duration,
             'optimized_duration': optimized_timeline.duration,
             'compression_ratio': optimized_timeline.duration / timeline.duration,
-            'output_file': output_drt_path,
+            'output_file': output_xml_path,
             'prompt_type': prompt_type,
             'target_duration': target_duration,
             'statistics': {

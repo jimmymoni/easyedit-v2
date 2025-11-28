@@ -156,7 +156,7 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ job, onDownload }) 
             className="w-full flex items-center justify-center space-x-2 bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2.5 rounded-lg font-medium transition-colors"
           >
             <Download className="h-4 w-4" />
-            <span>Download Edited Timeline (.drt)</span>
+            <span>Download Edited Timeline (.xml)</span>
           </button>
 
           {/* Enter God Mode Button */}

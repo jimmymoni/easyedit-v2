@@ -16,7 +16,7 @@ const MainPage: React.FC = () => {
 
   // State for file upload
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [drtFile, setDrtFile] = useState<File | null>(null);
+  const [timelineFile, setTimelineFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<api.UploadProgress | null>(null);
   const [uploadComplete, setUploadComplete] = useState(false);
@@ -96,20 +96,20 @@ const MainPage: React.FC = () => {
     setAudioFile(file);
   };
 
-  const handleDrtSelected = (file: File | null) => {
-    setDrtFile(file);
+  const handleTimelineSelected = (file: File | null) => {
+    setTimelineFile(file);
   };
 
   const handleUploadAndProcess = async () => {
     console.log('[Upload] Button clicked', {
       audioFile: audioFile?.name,
-      drtFile: drtFile?.name,
+      timelineFile: timelineFile?.name,
       isUploading,
       isPolling,
       isAuthenticated
     });
 
-    if (!audioFile || !drtFile) {
+    if (!audioFile || !timelineFile) {
       console.error('[Upload] Missing files - blocked');
       alert('Please select both audio and timeline files before uploading.');
       return;
@@ -122,14 +122,17 @@ const MainPage: React.FC = () => {
     try {
       console.log('[Upload] Starting upload...');
       // Upload files with progress tracking
-      const uploadResponse = await api.uploadFiles(
+      const uploadResponse = await api.simpleUploadFiles(
         audioFile,
-        drtFile,
+        timelineFile,
         (progress) => {
           setUploadProgress(progress);
         }
       );
       console.log('[Upload] Upload successful:', uploadResponse);
+      console.log('[Upload] job_id:', uploadResponse.job_id);
+      console.log('[Upload] Keys in response:', Object.keys(uploadResponse));
+      console.log('[Upload] Full JSON:', JSON.stringify(uploadResponse, null, 2));
 
       // Mark upload as complete
       setUploadComplete(true);
@@ -152,7 +155,7 @@ const MainPage: React.FC = () => {
 
       // Clear uploaded files
       setAudioFile(null);
-      setDrtFile(null);
+      setTimelineFile(null);
 
     } catch (error: any) {
       console.error('[Upload] Full error details:', {
@@ -178,7 +181,7 @@ const MainPage: React.FC = () => {
       const a = document.createElement('a');
       a.style.display = 'none';
       a.href = url;
-      a.download = `edited_timeline_${jobId.slice(-8)}.drt`;
+      a.download = `edited_timeline_${jobId.slice(-8)}.xml`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -189,7 +192,7 @@ const MainPage: React.FC = () => {
     }
   };
 
-  const canStartProcessing = audioFile && drtFile && !isUploading && !isPolling;
+  const canStartProcessing = audioFile && timelineFile && !isUploading && !isPolling;
 
   return (
     <div className="min-h-screen bg-background">
@@ -268,8 +271,8 @@ const MainPage: React.FC = () => {
               onFileSelected={handleAudioSelected}
             />
             <TimelineUploadZone
-              drtFile={drtFile}
-              onFileSelected={handleDrtSelected}
+              timelineFile={timelineFile}
+              onFileSelected={handleTimelineSelected}
             />
           </div>
 
@@ -328,7 +331,7 @@ const MainPage: React.FC = () => {
               </div>
               <h3 className="font-semibold text-foreground mb-2.5 text-base">Upload Files</h3>
               <p className="text-muted-foreground text-sm leading-relaxed">
-                Upload your audio file and DaVinci Resolve timeline (.drt) file. We support various audio formats including WAV, MP3, and M4A.
+                Upload your audio file and Final Cut Pro 7 XML (.xml) timeline file. We support various audio formats including WAV, MP3, and M4A.
               </p>
             </div>
 
@@ -348,7 +351,7 @@ const MainPage: React.FC = () => {
               </div>
               <h3 className="font-semibold text-foreground mb-2.5 text-base">Download & Import</h3>
               <p className="text-muted-foreground text-sm leading-relaxed">
-                Download your optimized .drt timeline file and import it directly into DaVinci Resolve to continue editing with pre-cut segments.
+                Download your optimized .xml timeline file and import it directly into Final Cut Pro or DaVinci Resolve to continue editing with pre-cut segments.
               </p>
             </div>
           </div>

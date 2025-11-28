@@ -83,7 +83,7 @@ describe('API Service', () => {
       const formData = call[1].body as FormData
 
       expect(formData.get('audio')).toBe(audioFile)
-      expect(formData.get('drt')).toBe(drtFile)
+      expect(formData.get('timeline')).toBe(drtFile)
     })
 
     it('should handle upload failures', async () => {

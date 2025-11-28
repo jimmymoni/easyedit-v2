@@ -44,7 +44,7 @@ class JobManager:
             logger.warning(f"Failed to connect to Redis: {str(e)}. Using file-based job storage.")
             self.redis_client = None
 
-    def submit_timeline_processing(self, job_id: str, audio_file_path: str, drt_file_path: str, options: dict) -> str:
+    def submit_timeline_processing(self, job_id: str, audio_file_path: str, timeline_file_path: str, options: dict) -> str:
         """
         Submit timeline processing job to background queue
         """
@@ -53,8 +53,8 @@ class JobManager:
             if not os.path.exists(audio_file_path):
                 raise ValidationError(f"Audio file not found: {audio_file_path}")
 
-            if not os.path.exists(drt_file_path):
-                raise ValidationError(f"DRT file not found: {drt_file_path}")
+            if not os.path.exists(timeline_file_path):
+                raise ValidationError(f"Timeline XML file not found: {timeline_file_path}")
 
             # Pre-create job data BEFORE task submission to avoid race condition
             # This ensures the job exists when frontend starts polling for status
@@ -65,7 +65,7 @@ class JobManager:
                 'status': 'queued',
                 'created_at': datetime.now().isoformat(),
                 'audio_file': audio_file_path,
-                'drt_file': drt_file_path,
+                'timeline_file': timeline_file_path,
                 'options': options,
                 'progress': 0,
                 'message': 'Job queued for processing'
@@ -76,7 +76,7 @@ class JobManager:
             logger.debug(f"Pre-stored job {job_id} in storage before task submission")
 
             # Submit task to Celery
-            task = process_timeline_task.delay(job_id, audio_file_path, drt_file_path, options)
+            task = process_timeline_task.delay(job_id, audio_file_path, timeline_file_path, options)
 
             # Update job metadata with task ID
             job_data['task_id'] = task.id

@@ -32,7 +32,7 @@ export interface UploadResponse {
   job_id: string;
   message: string;
   audio_filename: string;
-  drt_filename: string;
+  timeline_filename: string;
 }
 
 export interface ProcessingResponse {

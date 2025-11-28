@@ -40,6 +40,10 @@ class EditRulesEngine:
                 sample_rate=timeline.sample_rate
             )
 
+            # Preserve canonical file block from original timeline (critical for DaVinci Resolve)
+            if timeline.canonical_file_block:
+                edited_timeline.set_canonical_file_block(timeline.canonical_file_block)
+
             # Process each track
             for track in timeline.tracks:
                 edited_track = self._process_track(track, transcription_data, audio_analysis)
@@ -150,13 +154,29 @@ class EditRulesEngine:
 
             # Create clip before silence if it's long enough
             if silence_start - current_start >= self.rules['min_clip_length']:
+                # Calculate media offset: how far into original clip this segment starts
+                media_offset = current_start - clip.start_time
+
+                # If original clip has no media_start, initialize it from clip position
+                # This preserves the source media position when clips are split
+                if clip.media_start is not None:
+                    new_media_start = clip.media_start + media_offset
+                    new_media_end = clip.media_start + media_offset + (silence_start - current_start)
+                else:
+                    # Original clip spans from its start_time position in source media
+                    new_media_start = clip.start_time + media_offset
+                    new_media_end = clip.start_time + media_offset + (silence_start - current_start)
+
                 new_clip = Clip(
-                    name=f"{clip.name}_seg{len(result_clips)+1}",
+                    name=clip.name,  # Preserve original clip name for canonical file block reference
                     start_time=current_start,
                     end_time=silence_start,
                     duration=silence_start - current_start,
                     track_index=clip.track_index,
-                    enabled=clip.enabled
+                    media_start=new_media_start,
+                    media_end=new_media_end,
+                    enabled=clip.enabled,
+                    metadata=clip.metadata.copy()
                 )
                 result_clips.append(new_clip)
 
@@ -164,17 +184,52 @@ class EditRulesEngine:
 
         # Create final segment after last silence
         if clip_end - current_start >= self.rules['min_clip_length']:
+            # Calculate media offset for final segment
+            media_offset = current_start - clip.start_time
+
+            # If original clip has no media_start, initialize it from clip position
+            if clip.media_start is not None:
+                new_media_start = clip.media_start + media_offset
+                new_media_end = clip.media_start + media_offset + (clip_end - current_start)
+            else:
+                # Original clip spans from its start_time position in source media
+                new_media_start = clip.start_time + media_offset
+                new_media_end = clip.start_time + media_offset + (clip_end - current_start)
+
             new_clip = Clip(
-                name=f"{clip.name}_seg{len(result_clips)+1}",
+                name=clip.name,  # Preserve original clip name for canonical file block reference
                 start_time=current_start,
                 end_time=clip_end,
                 duration=clip_end - current_start,
                 track_index=clip.track_index,
-                enabled=clip.enabled
+                media_start=new_media_start,
+                media_end=new_media_end,
+                enabled=clip.enabled,
+                metadata=clip.metadata.copy()
             )
             result_clips.append(new_clip)
 
-        return result_clips
+        # Collapse timeline: reassign start_time/end_time to remove gaps
+        accumulated = 0.0
+        collapsed_clips = []
+
+        for seg in result_clips:
+            duration = seg.duration
+            collapsed_clip = Clip(
+                name=seg.name,
+                start_time=accumulated,
+                end_time=accumulated + duration,
+                duration=duration,
+                track_index=seg.track_index,
+                media_start=seg.media_start,
+                media_end=seg.media_end,
+                enabled=seg.enabled,
+                metadata=seg.metadata.copy()
+            )
+            collapsed_clips.append(collapsed_clip)
+            accumulated += duration
+
+        return collapsed_clips
 
     def _split_on_speaker_changes(self,
                                  clips: List[Clip],
@@ -217,21 +272,49 @@ class EditRulesEngine:
 
                     # Create clip for this speaker segment
                     if segment_end - current_start >= self.rules['min_clip_length']:
+                        # Calculate media offset for this speaker segment
+                        media_offset = current_start - clip.start_time
+                        # Merge speaker info with existing metadata
+                        segment_metadata = clip.metadata.copy()
+                        segment_metadata['speaker'] = segment.get('speaker')
                         new_clip = Clip(
-                            name=f"{clip.name}_speaker{segment.get('speaker', i)}",
+                            name=clip.name,  # Preserve original clip name for canonical file block reference
                             start_time=current_start,
                             end_time=segment_end,
                             duration=segment_end - current_start,
                             track_index=clip.track_index,
+                            media_start=clip.media_start + media_offset if clip.media_start is not None else None,
+                            media_end=(clip.media_start + media_offset + (segment_end - current_start)) if clip.media_start is not None else None,
                             enabled=clip.enabled,
-                            metadata={'speaker': segment.get('speaker')}
+                            metadata=segment_metadata
                         )
                         processed_clips.append(new_clip)
 
                     current_start = segment_end
 
             logger.info(f"Speaker splitting: {len(clips)} -> {len(processed_clips)} clips")
-            return processed_clips
+
+            # Collapse timeline: reassign start_time/end_time to remove gaps
+            accumulated = 0.0
+            collapsed_clips = []
+
+            for seg in processed_clips:
+                duration = seg.duration
+                collapsed_clip = Clip(
+                    name=seg.name,
+                    start_time=accumulated,
+                    end_time=accumulated + duration,
+                    duration=duration,
+                    track_index=seg.track_index,
+                    media_start=seg.media_start,
+                    media_end=seg.media_end,
+                    enabled=seg.enabled,
+                    metadata=seg.metadata.copy()
+                )
+                collapsed_clips.append(collapsed_clip)
+                accumulated += duration
+
+            return collapsed_clips
 
         except Exception as e:
             logger.error(f"Error splitting on speaker changes: {str(e)}")
@@ -268,14 +351,20 @@ class EditRulesEngine:
             )
 
             if should_merge:
-                # Create merged clip
+                # Create merged clip with preserved media references
+                # Use the first clip's media_start, calculate new media_end based on merged duration
+                merged_metadata = current_clip.metadata.copy()
+                merged_metadata.update(next_clip.metadata)  # Merge metadata from both clips
                 merged_clip = Clip(
-                    name=f"{current_clip.name}_merged",
+                    name=current_clip.name,  # Preserve original clip name for canonical file block reference
                     start_time=current_clip.start_time,
                     end_time=next_clip.end_time,
                     duration=next_clip.end_time - current_clip.start_time,
                     track_index=current_clip.track_index,
-                    enabled=current_clip.enabled
+                    media_start=current_clip.media_start,
+                    media_end=next_clip.media_end if next_clip.media_end is not None else current_clip.media_end,
+                    enabled=current_clip.enabled,
+                    metadata=merged_metadata
                 )
                 current_clip = merged_clip
             else:
@@ -286,7 +375,28 @@ class EditRulesEngine:
         merged_clips.append(current_clip)
 
         logger.info(f"Clip merging: {len(clips)} -> {len(merged_clips)} clips")
-        return merged_clips
+
+        # Collapse timeline: reassign start_time/end_time to remove gaps
+        accumulated = 0.0
+        collapsed_clips = []
+
+        for seg in merged_clips:
+            duration = seg.duration
+            collapsed_clip = Clip(
+                name=seg.name,
+                start_time=accumulated,
+                end_time=accumulated + duration,
+                duration=duration,
+                track_index=seg.track_index,
+                media_start=seg.media_start,
+                media_end=seg.media_end,
+                enabled=seg.enabled,
+                metadata=seg.metadata.copy()
+            )
+            collapsed_clips.append(collapsed_clip)
+            accumulated += duration
+
+        return collapsed_clips
 
     def _apply_energy_based_cuts(self,
                                 clips: List[Clip],
@@ -314,14 +424,21 @@ class EditRulesEngine:
                     cut_time = cut_point['time']
 
                     if cut_time - current_start >= self.rules['min_clip_length']:
+                        # Calculate media offset for this cut segment
+                        media_offset = current_start - clip.start_time
+                        # Preserve metadata and add cut reason
+                        cut_metadata = clip.metadata.copy()
+                        cut_metadata['cut_reason'] = cut_point.get('reason')
                         new_clip = Clip(
-                            name=f"{clip.name}_cut{len(processed_clips)}",
+                            name=clip.name,  # Preserve original clip name for canonical file block reference
                             start_time=current_start,
                             end_time=cut_time,
                             duration=cut_time - current_start,
                             track_index=clip.track_index,
+                            media_start=clip.media_start + media_offset if clip.media_start is not None else None,
+                            media_end=(clip.media_start + media_offset + (cut_time - current_start)) if clip.media_start is not None else None,
                             enabled=clip.enabled,
-                            metadata={'cut_reason': cut_point.get('reason')}
+                            metadata=cut_metadata
                         )
                         processed_clips.append(new_clip)
 
@@ -329,17 +446,42 @@ class EditRulesEngine:
 
                 # Add final segment
                 if clip.end_time - current_start >= self.rules['min_clip_length']:
+                    # Calculate media offset for final segment
+                    media_offset = current_start - clip.start_time
                     new_clip = Clip(
-                        name=f"{clip.name}_final",
+                        name=clip.name,  # Preserve original clip name for canonical file block reference
                         start_time=current_start,
                         end_time=clip.end_time,
                         duration=clip.end_time - current_start,
                         track_index=clip.track_index,
-                        enabled=clip.enabled
+                        media_start=clip.media_start + media_offset if clip.media_start is not None else None,
+                        media_end=(clip.media_start + media_offset + (clip.end_time - current_start)) if clip.media_start is not None else None,
+                        enabled=clip.enabled,
+                        metadata=clip.metadata.copy()
                     )
                     processed_clips.append(new_clip)
 
-            return processed_clips
+            # Collapse timeline: reassign start_time/end_time to remove gaps
+            accumulated = 0.0
+            collapsed_clips = []
+
+            for seg in processed_clips:
+                duration = seg.duration
+                collapsed_clip = Clip(
+                    name=seg.name,
+                    start_time=accumulated,
+                    end_time=accumulated + duration,
+                    duration=duration,
+                    track_index=seg.track_index,
+                    media_start=seg.media_start,
+                    media_end=seg.media_end,
+                    enabled=seg.enabled,
+                    metadata=seg.metadata.copy()
+                )
+                collapsed_clips.append(collapsed_clip)
+                accumulated += duration
+
+            return collapsed_clips
 
         except Exception as e:
             logger.error(f"Error applying energy-based cuts: {str(e)}")

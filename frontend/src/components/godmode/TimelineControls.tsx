@@ -65,7 +65,7 @@ const TimelineControls: React.FC<TimelineControlsProps> = ({
         >
           <Download className="h-4 w-4" />
           <span className="hidden sm:inline">
-            {isExporting ? 'Exporting...' : 'Export DRT'}
+            {isExporting ? 'Exporting...' : 'Export XML'}
           </span>
         </button>
       </div>

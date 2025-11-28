@@ -5,17 +5,17 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
 interface TimelineUploadZoneProps {
-  drtFile: File | null;
+  timelineFile: File | null;
   onFileSelected: (file: File | null) => void;
 }
 
-export default function TimelineUploadZone({ drtFile, onFileSelected }: TimelineUploadZoneProps) {
+export default function TimelineUploadZone({ timelineFile, onFileSelected }: TimelineUploadZoneProps) {
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
       const file = acceptedFiles[0];
       const extension = file.name.split('.').pop()?.toLowerCase();
 
-      if (['drt', 'xml'].includes(extension || '')) {
+      if (extension === 'xml') {
         onFileSelected(file);
       }
     }
@@ -24,7 +24,7 @@ export default function TimelineUploadZone({ drtFile, onFileSelected }: Timeline
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'application/xml': ['.drt', '.xml']
+      'application/xml': ['.xml']
     },
     multiple: false
   });
@@ -45,7 +45,7 @@ export default function TimelineUploadZone({ drtFile, onFileSelected }: Timeline
         relative cursor-pointer transition-all duration-200 border
         ${isDragActive
           ? 'border-primary bg-primary/5 shadow-lg shadow-primary/20'
-          : drtFile
+          : timelineFile
           ? 'border-border bg-card hover:bg-accent/50 shadow-sm hover:shadow-md'
           : 'border-dashed border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-accent/30 hover:shadow-sm'
         }
@@ -53,21 +53,21 @@ export default function TimelineUploadZone({ drtFile, onFileSelected }: Timeline
     >
       <input {...getInputProps()} />
 
-      {drtFile ? (
+      {timelineFile ? (
         <div className="p-4">
           <div className="flex items-center gap-3">
             <div className="flex-shrink-0">
               <FileVideo className="h-5 w-5 text-muted-foreground" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{drtFile.name}</p>
+              <p className="text-sm font-medium truncate">{timelineFile.name}</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {(drtFile.size / 1024).toFixed(1)} KB
+                {(timelineFile.size / 1024).toFixed(1)} KB
               </p>
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="text-xs">
-                {getFileExtension(drtFile.name)}
+                {getFileExtension(timelineFile.name)}
               </Badge>
               <button
                 onClick={handleRemove}
@@ -86,7 +86,7 @@ export default function TimelineUploadZone({ drtFile, onFileSelected }: Timeline
           </p>
           <p className="text-xs text-muted-foreground leading-relaxed">
             Drag & drop or click to upload<br />
-            <span className="text-muted-foreground/70">DRT, XML</span>
+            <span className="text-muted-foreground/70">FCP7 XML (.xml)</span>
           </p>
         </div>
       )}

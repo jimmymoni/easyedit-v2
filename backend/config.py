@@ -56,7 +56,7 @@ class Config:
 
     # Allowed file extensions
     ALLOWED_AUDIO_EXTENSIONS = {'wav', 'mp3', 'm4a', 'aac', 'flac'}
-    ALLOWED_DRT_EXTENSIONS = {'drt', 'xml'}
+    ALLOWED_TIMELINE_EXTENSIONS = {'xml'}  # Final Cut Pro 7 XML only
 
     # Replicate API Configuration
     # Max file size for direct upload to Replicate (SDK limit ~100MB, use 80MB for safety)

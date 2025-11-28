@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { ProcessingJob, ProcessingOptions, UploadResponse, ProcessingResponse } from '../types';
 
-const API_BASE_URL = import.meta.env.DEV ? '/api' : 'http://localhost:5000';
+// TEMPORARY: Testing minimal app on port 5000
+const API_BASE_URL = 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -71,14 +72,23 @@ const performTokenRefresh = async (): Promise<string | null> => {
 api.interceptors.request.use(
   (config) => {
     const token = getValidToken();
+
+    // If uploading FormData, DO NOT modify headers except Authorization.
+    if (config.data instanceof FormData) {
+      config.headers = config.headers || {};
+      if (token) config.headers.Authorization = `Bearer ${token}`;
+      return config; // DO NOT touch Content-Type, axios must set the boundary automatically.
+    }
+
+    // Normal behavior for non-FormData requests
     if (token) {
+      config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
     }
+
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
 // Add response interceptor to handle 401 errors with race condition protection
@@ -129,19 +139,39 @@ export interface UploadProgress {
 // Simple upload endpoint for speed testing (NO middleware, NO interceptors)
 export const simpleUploadFiles = async (
   audioFile: File,
-  drtFile: File,
+  timelineFile: File,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<UploadResponse> => {
+  // Validate files before upload
+  if (!audioFile) {
+    throw new Error('Audio file is required');
+  }
+  if (!timelineFile) {
+    throw new Error('Timeline file is required');
+  }
+
+  console.log('[API] simpleUploadFiles called', {
+    audioFile: audioFile?.name,
+    audioSize: audioFile?.size,
+    timelineFile: timelineFile?.name,
+    timelineSize: timelineFile?.size
+  });
+
   // Create a bare axios instance WITHOUT interceptors
+  // CRITICAL: Use direct backend URL to bypass Vite proxy which strips FormData
+  const directBackendURL = 'http://localhost:5000';  // Testing minimal app
   const simpleAxios = axios.create({
-    baseURL: API_BASE_URL,
+    baseURL: directBackendURL,
     timeout: 300000,
     // NO interceptors, NO auth headers
   });
 
   const formData = new FormData();
   formData.append('audio', audioFile);
-  formData.append('drt', drtFile);
+  formData.append('timeline', timelineFile);
+
+  console.log('[API] FormData created with keys:', Array.from(formData.keys()));
+  console.log('[API] Using direct backend URL:', directBackendURL);
 
   let startTime = Date.now();
   let lastLoaded = 0;
@@ -188,12 +218,38 @@ export const simpleUploadFiles = async (
 // Regular upload endpoint (WITH middleware)
 export const uploadFiles = async (
   audioFile: File,
-  drtFile: File,
+  timelineFile: File,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<UploadResponse> => {
+  // Validate files before upload
+  if (!audioFile) {
+    throw new Error('Audio file is required');
+  }
+  if (!timelineFile) {
+    throw new Error('Timeline file is required');
+  }
+
+  console.log('[API] uploadFiles called', {
+    audioFile: audioFile?.name,
+    audioSize: audioFile?.size,
+    timelineFile: timelineFile?.name,
+    timelineSize: timelineFile?.size
+  });
+
   const formData = new FormData();
   formData.append('audio', audioFile);
-  formData.append('drt', drtFile);
+  formData.append('timeline', timelineFile);
+
+  console.log('[API] Debug FormData:', {
+    hasAudio: formData.has('audio'),
+    hasTimeline: formData.has('timeline'),
+    audioName: (() => { const f = formData.get('audio'); return f instanceof File ? f.name : null; })(),
+    timelineName: (() => { const f = formData.get('timeline'); return f instanceof File ? f.name : null; })(),
+    audioSize: (() => { const f = formData.get('audio'); return f instanceof File ? f.size : null; })(),
+    timelineSize: (() => { const f = formData.get('timeline'); return f instanceof File ? f.size : null; })(),
+  });
+
+  console.log('[API] FormData created with keys:', Array.from(formData.keys()));
 
   let startTime = Date.now();
   let lastLoaded = 0;

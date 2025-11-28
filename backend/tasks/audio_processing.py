@@ -5,8 +5,8 @@ Audio processing background tasks
 from celery import current_task
 from celery_app import celery_app
 from config import Config
-from parsers.drt_parser import DRTParser
-from parsers.drt_writer import DRTWriter
+from parsers.xml_parser import FCP7XMLParser
+from parsers.xml_writer import FCP7XMLWriter
 # Always use SimpleAudioAnalyzer (scipy-based, Python 3.13 compatible)
 # AudioAnalyzer requires librosa which is not installed
 from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
@@ -47,9 +47,9 @@ def broadcast_failure(job_id: str, error: str, error_type: str = None):
         logger.warning(f"Failed to broadcast WebSocket failure: {str(e)}")
 
 @celery_app.task(bind=True, queue='audio', priority=7)
-def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path: str, options: dict):
+def process_timeline_task(self, job_id: str, audio_file_path: str, timeline_file_path: str, options: dict):
     """
-    Background task for processing timeline with audio analysis and editing
+    Background task for processing timeline with audio analysis and editing using FCP7 XML
     Can also be called directly (self=None) for synchronous processing
     """
     try:
@@ -66,11 +66,11 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
         if not os.path.exists(audio_file_path):
             raise ValidationError(f"Audio file not found: {audio_file_path}")
 
-        if not os.path.exists(drt_file_path):
-            raise ValidationError(f"DRT file not found: {drt_file_path}")
+        if not os.path.exists(timeline_file_path):
+            raise ValidationError(f"Timeline XML file not found: {timeline_file_path}")
 
-        # Parse DRT file
-        progress_message = 'Parsing timeline file'
+        # Parse FCP7 XML timeline
+        progress_message = 'Parsing FCP7 XML timeline'
         if self:
             self.update_state(
                 state='PROGRESS',
@@ -78,8 +78,8 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
             )
         broadcast_progress(job_id, 20, progress_message)
 
-        drt_parser = DRTParser()
-        timeline = drt_parser.parse_file(drt_file_path)
+        xml_parser = FCP7XMLParser()
+        timeline = xml_parser.parse_file(timeline_file_path)
 
         # Load and analyze audio with context manager for guaranteed cleanup
         if self:
@@ -247,11 +247,11 @@ def process_timeline_task(self, job_id: str, audio_file_path: str, drt_file_path
                 meta={'progress': 90, 'message': 'Generating output file', 'job_id': job_id}
             )
 
-        output_filename = f"{job_id}_edited_timeline.drt"
+        output_filename = f"{job_id}_edited_timeline.xml"
         output_path = os.path.join(Config.TEMP_FOLDER, output_filename)
 
-        drt_writer = DRTWriter()
-        success = drt_writer.write_timeline(edited_timeline, output_path)
+        xml_writer = FCP7XMLWriter()
+        success = xml_writer.write_timeline(edited_timeline, output_path)
 
         if not success:
             raise ProcessingError("Failed to write output timeline file")
