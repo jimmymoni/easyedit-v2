@@ -437,11 +437,11 @@ class FCP7XMLParser:
                         'enabled': clipitem.get('enabled', 'TRUE').upper() == 'TRUE'
                     }
 
-                    # Extract in/out points if available
+                    # Extract in/out points (source media references) if available
                     if 'in' in clipitem:
-                        clip_info['media_in'] = float(clipitem['in']) / fps
+                        clip_info['media_start'] = float(clipitem['in']) / fps  # Fixed: was 'media_in'
                     if 'out' in clipitem:
-                        clip_info['media_out'] = float(clipitem['out']) / fps
+                        clip_info['media_end'] = float(clipitem['out']) / fps  # Fixed: was 'media_out'
 
                     # Extract file information if available
                     if 'file' in clipitem:
@@ -525,15 +525,13 @@ class FCP7XMLParser:
                 'enabled': clip_data.get('@enabled', 'TRUE').upper() == 'TRUE'
             }
 
-            # Extract media source information
-            if 'file' in clip_data:
-                file_info = clip_data['file']
-                clip_info['media_start'] = self._timecode_to_seconds(
-                    file_info.get('in', '00:00:00:00')
-                )
-                clip_info['media_end'] = self._timecode_to_seconds(
-                    file_info.get('out', '00:00:00:00')
-                )
+            # Extract media source information from <in> and <out> tags (direct children of <clipitem>)
+            # These define where in the source media this clip starts/ends
+            if 'in' in clip_data:
+                clip_info['media_start'] = self._timecode_to_seconds(clip_data['in'])
+
+            if 'out' in clip_data:
+                clip_info['media_end'] = self._timecode_to_seconds(clip_data['out'])
 
             return clip_info
 
