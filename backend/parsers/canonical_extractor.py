@@ -76,6 +76,7 @@ def extract_canonical_file_block(original_xml_path: str) -> Dict[str, Any]:
             raise ValueError("No file element found in clipitem")
 
         # Extract file metadata (EXACT values, no modifications)
+        # CRITICAL: Do NOT extract filters - DaVinci Resolve compatibility requires clean clips
         canonical_block = {
             "file_id": file_elem.get('id'),
             "name": _get_text(file_elem, 'name'),
@@ -84,12 +85,12 @@ def extract_canonical_file_block(original_xml_path: str) -> Dict[str, Any]:
             "timecode": _extract_timecode(file_elem),
             "reel_name": _get_text(file_elem.find('reel'), 'name') if file_elem.find('reel') is not None else None,
             "samplecharacteristics": _extract_samplecharacteristics(file_elem),
-            "audio": _extract_audio_characteristics(file_elem),
-            "filters": _extract_filters(clipitem)
+            "audio": _extract_audio_characteristics(file_elem)
+            # "filters": _extract_filters(clipitem)  # REMOVED - breaks DaVinci Resolve import
         }
 
         logger.info(f"Extracted canonical file block: file_id={canonical_block['file_id']}, "
-                   f"name={canonical_block['name']}, {len(canonical_block['filters'])} filters")
+                   f"name={canonical_block['name']}")
         return canonical_block
 
     except Exception as e:

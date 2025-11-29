@@ -181,9 +181,14 @@ LOG_LEVEL=INFO
 - `config.py` - Configuration management with environment variables
 - `models/` - Data models for Timeline, Track, and Clip objects
 - `parsers/` - DRT file parsing and writing utilities
-  - **IMPORTANT**: XML structure follows DaVinci Resolve format (`<xmeml><sequence>`)
-  - The `xml_writer.py` generates XMLs WITHOUT `<project><children>` wrappers (fixed 2025-11-27)
-  - Canonical file block pattern: first clip gets full block, subsequent clips reference by ID
+  - **CRITICAL XML STRUCTURE RULES** (DaVinci Resolve compatibility):
+    1. **Root Structure**: `<xmeml><sequence>` (NO `<project><children>` wrappers)
+    2. **Canonical File Block**: Defined ONCE in `<media>` section (after all tracks)
+    3. **Clipitem References**: ALL clips reference file by ID (`<file id="file-1"/>` self-closing)
+    4. **Audio Tracks**: Must exist with matching clipitems for each video clip
+    5. **In/Out Values**: Must reflect actual source media positions (not all zeros)
+  - **Fixed 2025-11-29**: Canonical file block now correctly placed in `<media>` (not in first clipitem)
+  - **Validation**: Run `backend/test_xml_structure_fix.py` to verify XML structure
   - Repair script available: `scripts/repair_xml_structure.py` for fixing old broken XMLs
 - `services/` - Core business logic (audio analysis, AI, editing rules)
 - `utils/` - Production utilities (logging, monitoring, rate limiting)

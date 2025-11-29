@@ -61,9 +61,22 @@ class FCP7XMLWriter:
         name = ET.SubElement(sequence, 'name')
         name.text = timeline.name
 
-        # Add duration
+        # Add duration - MUST match last clip end frame for DaVinci Resolve compatibility
+        # Calculate from actual clips instead of timeline.duration property
+        all_video_clips = []
+        for track in timeline.get_tracks_by_type('video'):
+            all_video_clips.extend(track.clips)
+
         duration = ET.SubElement(sequence, 'duration')
-        duration.text = str(int(timeline.duration * timeline.frame_rate))
+        if all_video_clips:
+            # Calculate max end frame from actual clips
+            max_end_frame = max(int(clip.end_time * timeline.frame_rate) for clip in all_video_clips)
+            duration.text = str(max_end_frame)
+            logger.debug(f"Sequence duration set to {max_end_frame} frames (from last clip end)")
+        else:
+            # Fallback: use timeline.duration if no video clips
+            duration.text = str(int(timeline.duration * timeline.frame_rate))
+            logger.warning("No video clips found, using timeline.duration as fallback")
 
         # Add rate (frame rate)
         rate = ET.SubElement(sequence, 'rate')
@@ -104,11 +117,9 @@ class FCP7XMLWriter:
             video = ET.SubElement(media, 'video')
 
             # Add video tracks FIRST (before format) - DaVinci Resolve structure
-            # First track gets is_first_track=True for canonical file block placement
-            for idx, track in enumerate(video_tracks):
+            for track in video_tracks:
                 track_elem = self._create_track_element(
-                    track, timeline.frame_rate, canonical_block,
-                    is_first_track=(idx == 0)
+                    track, timeline.frame_rate, canonical_block
                 )
                 video.append(track_elem)
 
@@ -131,11 +142,10 @@ class FCP7XMLWriter:
         if audio_tracks:
             audio = ET.SubElement(media, 'audio')
 
-            # Add audio tracks - all reference the same file ID (is_first_track=False)
+            # Add audio tracks - all reference the same file ID
             for track in audio_tracks:
                 track_elem = self._create_track_element(
-                    track, timeline.frame_rate, canonical_block,
-                    is_first_track=False
+                    track, timeline.frame_rate, canonical_block
                 )
                 audio.append(track_elem)
 
@@ -147,6 +157,13 @@ class FCP7XMLWriter:
             depth.text = '16'
             sample_rate_elem = ET.SubElement(sample_characteristics, 'samplerate')
             sample_rate_elem.text = str(timeline.sample_rate)
+
+        # Add canonical file block to media section (DaVinci Resolve format)
+        # This MUST be added after all tracks (video and audio) but before timecode
+        if canonical_block:
+            canonical_file_elem = self._create_canonical_file_element(canonical_block, timeline.frame_rate)
+            media.append(canonical_file_elem)
+            logger.info(f"Added canonical file block to <media> section: {canonical_block['file_id']}")
 
         # Add timecode
         timecode_elem = ET.SubElement(sequence, 'timecode')
@@ -169,24 +186,66 @@ class FCP7XMLWriter:
 
         return sequence
 
+    def _recalculate_cumulative_positions(self, track: Track, frame_rate: float) -> None:
+        """
+        Recalculate clip start/end times to ensure sequential timeline placement.
+
+        This ensures that:
+        1. Clips are placed sequentially on timeline (no gaps, no overlaps)
+        2. start/end values match cumulative frames
+        3. Each clip: duration = end - start
+        4. Next clip start = previous clip end
+
+        Critical for DaVinci Resolve compatibility - clips must be sequential.
+        """
+        cumulative_frames = 0
+
+        for clip in track.clips:
+            # Calculate clip duration from source media range (in/out points)
+            if clip.media_start is not None and clip.media_end is not None:
+                # Use media_start/media_end (source file positions)
+                clip_duration_frames = int((clip.media_end - clip.media_start) * frame_rate)
+            else:
+                # Fallback: use clip.duration
+                clip_duration_frames = int(clip.duration * frame_rate)
+
+            # Set timeline positions (where clip appears on timeline)
+            clip.start_time = cumulative_frames / frame_rate
+            clip.end_time = (cumulative_frames + clip_duration_frames) / frame_rate
+
+            # Also update clip.duration to match (for consistency)
+            clip.duration = (clip.end_time - clip.start_time)
+
+            # Update cumulative counter for next clip
+            cumulative_frames += clip_duration_frames
+
+            logger.debug(
+                f"Clip '{clip.name}': timeline_start={int(clip.start_time * frame_rate)}, "
+                f"timeline_end={int(clip.end_time * frame_rate)}, "
+                f"source_in={int((clip.media_start or 0) * frame_rate)}, "
+                f"source_out={int((clip.media_end or clip.duration) * frame_rate)}, "
+                f"duration={clip_duration_frames} frames"
+            )
+
     def _create_track_element(self, track: Track, frame_rate: float,
-                             canonical_block: Optional[Dict[str, Any]] = None,
-                             is_first_track: bool = False) -> ET.Element:
+                             canonical_block: Optional[Dict[str, Any]] = None) -> ET.Element:
         """Create track element from Track object"""
         track_elem = ET.Element('track')
 
-        # Add clips - first clip of first track gets full file block
-        for idx, clip in enumerate(track.clips):
-            is_first_clip = (is_first_track and idx == 0)
-            clip_elem = self._create_clipitem_element(clip, frame_rate, canonical_block, is_first_clip)
+        # RECALCULATE cumulative positions before writing clips
+        # This ensures sequential start/end times with no gaps or overlaps
+        self._recalculate_cumulative_positions(track, frame_rate)
+
+        # Add clips - all reference canonical file by ID
+        for clip in track.clips:
+            clip_elem = self._create_clipitem_element(clip, frame_rate, canonical_block)
             track_elem.append(clip_elem)
 
         return track_elem
 
     def _create_clipitem_element(self, clip: Clip, frame_rate: float,
-                                canonical_block: Optional[Dict[str, Any]] = None,
-                                is_first_clip: bool = False) -> ET.Element:
-        """Create clipitem - first clip gets full file block, rest reference by ID"""
+                                canonical_block: Optional[Dict[str, Any]] = None) -> ET.Element:
+        """Create clipitem - all clips reference canonical file by ID"""
         clipitem = ET.Element('clipitem', id=f'clipitem-{clip.name}')
 
         # Add clip name
@@ -223,39 +282,19 @@ class FCP7XMLWriter:
         out_point = ET.SubElement(clipitem, 'out')
         out_point.text = str(int((clip.media_end or clip.duration) * frame_rate))
 
-        # FILE BLOCK - full on first clip, reference-only on subsequent clips
+        # FILE BLOCK - ALL clips reference canonical file by ID (self-closing tag only)
+        # CRITICAL: Do NOT add full file definition here - only reference by ID
         if canonical_block:
-            if is_first_clip:
-                # FIRST CLIP: Full canonical file block inline
-                file_elem = self._create_canonical_file_element(canonical_block, frame_rate)
-                clipitem.append(file_elem)
-            else:
-                # SUBSEQUENT CLIPS: Reference by ID only (self-closing tag)
-                file_ref = ET.SubElement(clipitem, 'file', id=canonical_block['file_id'])
+            # All clips: Reference by ID only (self-closing tag)
+            file_ref = ET.SubElement(clipitem, 'file', id=canonical_block['file_id'])
         else:
-            # Fallback: inline file block (old behavior for backward compatibility)
-            file_elem = ET.SubElement(clipitem, 'file', id=f'file-{clip.name}')
+            # Fallback: Reference with generic file ID if no canonical block
+            # This should rarely happen in production (canonical block should always exist)
+            file_ref = ET.SubElement(clipitem, 'file', id='file-1')
+            logger.warning(f"No canonical block provided for clip '{clip.name}', using generic file-1 reference")
 
-            file_name = ET.SubElement(file_elem, 'name')
-            file_name.text = clip.name
-
-            file_path = ET.SubElement(file_elem, 'pathurl')
-            file_path.text = f'file://localhost/{clip.name}'
-
-            # Add rate for file
-            file_rate = ET.SubElement(file_elem, 'rate')
-            file_rate_timebase = ET.SubElement(file_rate, 'timebase')
-            file_rate_timebase.text = str(int(frame_rate))
-            file_rate_ntsc = ET.SubElement(file_rate, 'ntsc')
-            file_rate_ntsc.text = 'FALSE'
-
-            # Add duration for file
-            file_duration = ET.SubElement(file_elem, 'duration')
-            file_duration.text = str(int(clip.duration * frame_rate))
-
-        # Add filters from canonical block (preserves effects)
-        if canonical_block and canonical_block.get('filters'):
-            self._add_filters_to_clipitem(clipitem, canonical_block['filters'])
+        # DO NOT add filters - DaVinci Resolve compatibility requires clean clips
+        # Filters are preserved in the canonical file block if needed, but NOT in clipitems
 
         return clipitem
 

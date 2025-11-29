@@ -664,9 +664,11 @@ def get_job_status(job_id):
             # Add result fields if available
             if result:
                 response.update({
-                    "stats": result.get("stats", {}),
+                    # NO stats field - no automatic editing in GodMode-only architecture
+                    "stats": result.get("stats"),  # Optional - only for old jobs (backward compatibility)
                     "transcription_available": result.get("transcription_available", False),
                     "audio_analysis": result.get("audio_analysis", {}),
+                    "content_analysis_available": bool(result.get("content_analysis")),
                     "filler_word_detection": result.get("filler_word_detection"),
                     "ai_enhancements": result.get("ai_enhancements"),
                 })
@@ -696,8 +698,9 @@ def get_job_status(job_id):
         "message": job.get("message", "Processing"),
         "created_at": job["created_at"].isoformat(),
         "task_id": job.get("task_id"),
-        "stats": job.get("stats", {}),
-        "transcription_available": job.get("transcription_available", False)
+        "stats": job.get("stats"),  # Optional - only for old jobs
+        "transcription_available": job.get("transcription_available", False),
+        "content_analysis_available": bool(job.get("result", {}).get("content_analysis"))
     })
 
 @app.route('/download/<job_id>', methods=['GET'])
@@ -727,10 +730,21 @@ def download_result(job_id):
 
         # Get output file from result
         result = job_status.get("result", {})
-        output_file = result.get("output_file") or job_status.get("output_file")
 
-        if not output_file or not os.path.exists(output_file):
-            return jsonify({"error": "Output file not found"}), 404
+        # Check for AI-edited file first, then fallback to regular output_file
+        output_file = result.get("ai_edited_output_file") or result.get("output_file")
+
+        # New architecture: no initial XML exists in GodMode-only workflow
+        if not output_file:
+            return jsonify({
+                "error": "No pre-generated timeline available in GodMode-only architecture.",
+                "message": "Use God Mode to create custom edits and download from there.",
+                "godmode_url": f"/godmode/{job_id}"
+            }), 404
+
+        # Check if file exists
+        if not os.path.exists(output_file):
+            return jsonify({"error": f"Output file not found: {output_file}"}), 404
 
         return send_file(
             output_file,
