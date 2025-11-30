@@ -111,6 +111,9 @@ class FCP7XMLWriter:
         # Add media
         media = ET.SubElement(sequence, 'media')
 
+        # Initialize global clip counter for unique IDs across entire sequence
+        clip_counter = {'count': 0}  # Use dict to allow mutation in nested functions
+
         # Add video tracks
         video_tracks = timeline.get_tracks_by_type('video')
         if video_tracks:
@@ -119,7 +122,7 @@ class FCP7XMLWriter:
             # Add video tracks FIRST (before format) - DaVinci Resolve structure
             for track in video_tracks:
                 track_elem = self._create_track_element(
-                    track, timeline.frame_rate, canonical_block
+                    track, timeline.frame_rate, canonical_block, 'video', clip_counter
                 )
                 video.append(track_elem)
 
@@ -142,10 +145,10 @@ class FCP7XMLWriter:
         if audio_tracks:
             audio = ET.SubElement(media, 'audio')
 
-            # Add audio tracks - all reference the same file ID
+            # Add audio tracks - all reference the same file ID, continue clip counter
             for track in audio_tracks:
                 track_elem = self._create_track_element(
-                    track, timeline.frame_rate, canonical_block
+                    track, timeline.frame_rate, canonical_block, 'audio', clip_counter
                 )
                 audio.append(track_elem)
 
@@ -228,7 +231,9 @@ class FCP7XMLWriter:
             )
 
     def _create_track_element(self, track: Track, frame_rate: float,
-                             canonical_block: Optional[Dict[str, Any]] = None) -> ET.Element:
+                             canonical_block: Optional[Dict[str, Any]] = None,
+                             track_type: str = 'video',
+                             clip_counter: Optional[Dict[str, int]] = None) -> ET.Element:
         """Create track element from Track object"""
         track_elem = ET.Element('track')
 
@@ -236,17 +241,29 @@ class FCP7XMLWriter:
         # This ensures sequential start/end times with no gaps or overlaps
         self._recalculate_cumulative_positions(track, frame_rate)
 
-        # Add clips - all reference canonical file by ID
+        # Add clips - all reference canonical file by ID with unique IDs
         for clip in track.clips:
-            clip_elem = self._create_clipitem_element(clip, frame_rate, canonical_block)
+            clip_elem = self._create_clipitem_element(clip, frame_rate, canonical_block, track_type, clip_counter)
             track_elem.append(clip_elem)
 
         return track_elem
 
     def _create_clipitem_element(self, clip: Clip, frame_rate: float,
-                                canonical_block: Optional[Dict[str, Any]] = None) -> ET.Element:
-        """Create clipitem - all clips reference canonical file by ID"""
-        clipitem = ET.Element('clipitem', id=f'clipitem-{clip.name}')
+                                canonical_block: Optional[Dict[str, Any]] = None,
+                                track_type: str = 'video',
+                                clip_counter: Optional[Dict[str, int]] = None) -> ET.Element:
+        """Create clipitem - all clips reference canonical file by ID with unique sequential IDs"""
+        # Generate unique clipitem ID using global counter
+        if clip_counter is not None:
+            clip_counter['count'] += 1
+            clip_id = clip_counter['count']
+        else:
+            # Fallback if no counter provided (shouldn't happen)
+            clip_id = 1
+
+        # Use different prefix for audio vs video for clarity
+        prefix = 'clipitem' if track_type == 'video' else 'audioclip'
+        clipitem = ET.Element('clipitem', id=f'{prefix}-{clip_id}')
 
         # Add clip name
         name = ET.SubElement(clipitem, 'name')
