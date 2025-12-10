@@ -246,26 +246,13 @@ def simple_upload():
     NO authentication, NO rate limiting, NO validation, NO error handling
     This endpoint exists to test if middleware is causing slowness
     """
-    import sys
-    print("[SIMPLE-UPLOAD] === FUNCTION CALLED ===", flush=True)
-    sys.stdout.flush()
-
     if request.method == 'OPTIONS':
-        print("[SIMPLE-UPLOAD] OPTIONS request", flush=True)
         return '', 200
 
     try:
-        # DEBUG
-        print(f"[SIMPLE-UPLOAD] Content-Type: {request.content_type}", flush=True)
-        print(f"[SIMPLE-UPLOAD] Files keys: {list(request.files.keys())}")
-        print(f"[SIMPLE-UPLOAD] Form keys: {list(request.form.keys())}")
-        print(f"[SIMPLE-UPLOAD] Files dict: {dict(request.files)}")
-
         # Get files directly
         audio = request.files.get('audio')
         timeline = request.files.get('timeline')
-
-        print(f"[SIMPLE-UPLOAD] Audio: {audio}, Timeline: {timeline}")
 
         if not audio or not timeline:
             return jsonify({"error": "Missing files", "debug": {
@@ -309,7 +296,6 @@ def simple_upload():
         job_data['timeline_file'] = timeline_path
         job_data['type'] = 'simple_upload'
         job_manager._store_job_data(job_id, job_data)
-        print(f"[SIMPLE-UPLOAD] Job registered in job manager: {job_id}", flush=True)
 
         response_data = {
             "job_id": job_id,
@@ -317,7 +303,6 @@ def simple_upload():
             "audio_filename": audio.filename,
             "timeline_filename": timeline.filename
         }
-        print(f"[SIMPLE-UPLOAD] Returning response: {response_data}", flush=True)
 
         return jsonify(response_data), 200
 
