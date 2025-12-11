@@ -1840,6 +1840,522 @@ def manual_cleanup():
         logger.error(f"Manual cleanup error: {str(e)}")
         return jsonify({"error": "Cleanup failed"}), 500
 
+# ==========================================
+# VIDEO EDITOR ENDPOINTS
+# ==========================================
+
+@app.route('/video-upload', methods=['POST'])
+@require_auth()
+@require_rate_limit("5 per minute, 50 per hour")
+@error_handler
+def upload_video():
+    """
+    Upload video file for analysis
+    Returns job_id and video metadata
+    """
+    try:
+        # Get video file from request
+        if 'video' not in request.files:
+            return jsonify({"error": "No video file provided"}), 400
+
+        video_file = request.files['video']
+
+        # Validate video file
+        from utils.error_handlers import validate_file_upload
+        validate_file_upload(video_file, Config.ALLOWED_VIDEO_EXTENSIONS, Config.MAX_FILE_SIZE_MB)
+
+        # Generate job ID
+        import uuid
+        job_id = str(uuid.uuid4())
+
+        # Save video file
+        from werkzeug.utils import secure_filename
+        video_filename = secure_filename(video_file.filename)
+        video_path = os.path.join(Config.UPLOAD_FOLDER, f"{job_id}_video_{video_filename}")
+        video_file.save(video_path)
+
+        logger.info(f"Video uploaded: {video_path}")
+
+        # Extract video metadata
+        from services.video_audio_extractor import VideoAudioExtractor
+        extractor = VideoAudioExtractor()
+        video_info = extractor.get_video_info(video_path)
+
+        if not video_info.get('success'):
+            return jsonify({"error": "Failed to read video metadata"}), 400
+
+        # Create job entry
+        job_data = {
+            'job_id': job_id,
+            'type': 'video_editing',
+            'status': 'uploaded',
+            'created_at': time.time(),
+            'video_file': video_path,
+            'video_info': video_info,
+            'progress': 5,
+            'message': 'Video uploaded successfully'
+        }
+
+        processing_jobs[job_id] = job_data
+        job_manager._store_job_data(job_id, job_data)
+
+        logger.info(f"Video job created: {job_id}")
+
+        return jsonify({
+            "job_id": job_id,
+            "message": "Video uploaded successfully",
+            "video_filename": video_filename,
+            "video_info": {
+                "duration": video_info['duration'],
+                "size_mb": video_info['size_mb'],
+                "width": video_info['width'],
+                "height": video_info['height'],
+                "fps": video_info['fps'],
+                "codec": video_info['codec']
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Video upload error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/analyze-video/<job_id>', methods=['POST'])
+@require_auth()
+@require_rate_limit("2 per minute, 20 per hour")
+@error_handler
+def analyze_video(job_id):
+    """
+    Analyze video: extract audio, transcribe, detect repeated takes
+    Runs in background
+    """
+    try:
+        from utils.error_handlers import validate_job_id
+        job_id = validate_job_id(job_id)
+
+        # Get job
+        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        if not job_data:
+            return jsonify({"error": "Job not found"}), 404
+
+        if job_data.get('type') != 'video_editing':
+            return jsonify({"error": "Not a video editing job"}), 400
+
+        video_path = job_data.get('video_file')
+        if not video_path or not os.path.exists(video_path):
+            return jsonify({"error": "Video file not found"}), 404
+
+        # Update status
+        job_data['status'] = 'analyzing'
+        job_data['progress'] = 10
+        job_data['message'] = 'Starting video analysis...'
+        processing_jobs[job_id] = job_data
+        job_manager.update_job_status(job_id, 'analyzing', message='Starting video analysis')
+
+        # Start background processing
+        def analyze_video_task():
+            try:
+                from services.video_audio_extractor import VideoAudioExtractor
+                from services.transcription_service import TranscriptionService
+                from services.repeated_take_detector import RepeatedTakeDetector
+
+                # Step 1: Extract audio
+                logger.info(f"[{job_id}] Extracting audio from video...")
+                extractor = VideoAudioExtractor()
+                audio_filename = f"{job_id}_extracted_audio.wav"
+                audio_path = os.path.join(Config.TEMP_FOLDER, audio_filename)
+
+                audio_result = extractor.extract_audio(video_path, audio_path)
+                if not audio_result.get('success'):
+                    job_data['status'] = 'failed'
+                    job_data['message'] = 'Audio extraction failed'
+                    processing_jobs[job_id] = job_data
+                    job_manager.update_job_status(job_id, 'failed', message='Audio extraction failed')
+                    return
+
+                job_data['audio_file'] = audio_path
+                job_data['progress'] = 20
+                job_data['message'] = 'Audio extracted, starting transcription...'
+                processing_jobs[job_id] = job_data
+                job_manager.update_job_status(job_id, 'analyzing', message='Starting transcription', progress=20)
+
+                # Step 2: Transcribe audio
+                logger.info(f"[{job_id}] Transcribing audio...")
+                transcription_service = TranscriptionService()
+                transcription_result = transcription_service.transcribe(audio_path)
+
+                if not transcription_result.get('success'):
+                    job_data['status'] = 'failed'
+                    job_data['message'] = 'Transcription failed'
+                    processing_jobs[job_id] = job_data
+                    job_manager.update_job_status(job_id, 'failed', message='Transcription failed')
+                    return
+
+                job_data['transcription'] = transcription_result
+                job_data['progress'] = 80
+                job_data['message'] = 'Transcription complete, detecting repeated takes...'
+                processing_jobs[job_id] = job_data
+                job_manager.update_job_status(job_id, 'analyzing', message='Detecting repeated takes', progress=80)
+
+                # Step 3: Detect repeated takes
+                logger.info(f"[{job_id}] Detecting repeated takes...")
+                detector = RepeatedTakeDetector()
+                analysis_result = detector.detect_repeated_takes(
+                    transcription_result,
+                    job_data.get('video_info', {})
+                )
+
+                job_data['analysis'] = analysis_result
+                job_data['status'] = 'analyzed'
+                job_data['progress'] = 100
+                job_data['message'] = 'Analysis complete'
+                processing_jobs[job_id] = job_data
+                job_manager.update_job_status(job_id, 'analyzed', message='Analysis complete', progress=100)
+
+                logger.info(f"[{job_id}] Video analysis complete")
+
+            except Exception as e:
+                logger.error(f"[{job_id}] Video analysis error: {str(e)}")
+                job_data['status'] = 'failed'
+                job_data['message'] = f'Analysis failed: {str(e)}'
+                processing_jobs[job_id] = job_data
+                job_manager.update_job_status(job_id, 'failed', message=str(e))
+
+        # Run in thread
+        import threading
+        thread = threading.Thread(target=analyze_video_task)
+        thread.start()
+
+        return jsonify({
+            "job_id": job_id,
+            "status": "analyzing",
+            "message": "Video analysis started",
+            "estimated_time": "10-15 minutes"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Analyze video error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/video-analysis/<job_id>', methods=['GET'])
+@require_auth()
+@error_handler
+def get_video_analysis(job_id):
+    """Get analysis results (detected segments)"""
+    try:
+        from utils.error_handlers import validate_job_id
+        job_id = validate_job_id(job_id)
+
+        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        if not job_data:
+            return jsonify({"error": "Job not found"}), 404
+
+        if job_data.get('type') != 'video_editing':
+            return jsonify({"error": "Not a video editing job"}), 400
+
+        return jsonify({
+            "job_id": job_id,
+            "status": job_data.get('status'),
+            "progress": job_data.get('progress', 0),
+            "message": job_data.get('message', ''),
+            "analysis": job_data.get('analysis', {})
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Get video analysis error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/apply-video-cuts/<job_id>', methods=['POST'])
+@require_auth()
+@require_rate_limit("2 per minute, 20 per hour")
+@error_handler
+def apply_video_cuts(job_id):
+    """Apply cuts to video based on user adjustments"""
+    try:
+        from utils.error_handlers import validate_job_id
+        job_id = validate_job_id(job_id)
+
+        # Get request data
+        data = request.get_json() or {}
+        segment_adjustments = data.get('segment_adjustments', [])
+        encoding_method = data.get('encoding_method', 'reencode')
+
+        # Get job
+        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        if not job_data:
+            return jsonify({"error": "Job not found"}), 404
+
+        if job_data.get('status') != 'analyzed':
+            return jsonify({"error": "Job must be analyzed first"}), 400
+
+        # Update segments with user adjustments
+        analysis = job_data.get('analysis', {})
+        segments = analysis.get('segments', [])
+
+        # Apply user adjustments
+        adjustment_map = {adj['id']: adj['action'] for adj in segment_adjustments}
+        for segment in segments:
+            if segment['id'] in adjustment_map:
+                segment['action'] = adjustment_map[segment['id']]
+
+        # Filter segments to keep
+        segments_to_keep = [s for s in segments if s['action'] == 'keep']
+
+        # Update status
+        job_data['status'] = 'processing'
+        job_data['progress'] = 10
+        job_data['message'] = 'Cutting video...'
+        processing_jobs[job_id] = job_data
+        job_manager.update_job_status(job_id, 'processing', message='Cutting video', progress=10)
+
+        # Start background processing
+        def cut_video_task():
+            try:
+                from services.video_editor import VideoEditor
+
+                video_path = job_data.get('video_file')
+                output_filename = f"{job_id}_edited_video.mp4"
+                output_path = os.path.join(Config.TEMP_FOLDER, output_filename)
+
+                # Cut video
+                logger.info(f"[{job_id}] Cutting video with {len(segments_to_keep)} segments...")
+                editor = VideoEditor()
+                cut_result = editor.cut_video(video_path, segments_to_keep, output_path, method=encoding_method)
+
+                if not cut_result.get('success'):
+                    job_data['status'] = 'failed'
+                    job_data['message'] = 'Video cutting failed'
+                    processing_jobs[job_id] = job_data
+                    job_manager.update_job_status(job_id, 'failed', message='Video cutting failed')
+                    return
+
+                job_data['output_video_file'] = output_path
+                job_data['status'] = 'completed'
+                job_data['progress'] = 100
+                job_data['message'] = 'Video editing complete'
+                processing_jobs[job_id] = job_data
+                job_manager.update_job_status(job_id, 'completed', message='Video editing complete', progress=100)
+
+                logger.info(f"[{job_id}] Video cutting complete: {output_path}")
+
+            except Exception as e:
+                logger.error(f"[{job_id}] Video cutting error: {str(e)}")
+                job_data['status'] = 'failed'
+                job_data['message'] = f'Cutting failed: {str(e)}'
+                processing_jobs[job_id] = job_data
+                job_manager.update_job_status(job_id, 'failed', message=str(e))
+
+        # Run in thread
+        import threading
+        thread = threading.Thread(target=cut_video_task)
+        thread.start()
+
+        return jsonify({
+            "job_id": job_id,
+            "status": "processing",
+            "message": "Video cutting started",
+            "estimated_time": "5-10 minutes"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Apply video cuts error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/download-video/<job_id>', methods=['GET'])
+@require_auth()
+@require_rate_limit("10 per minute, 100 per hour")
+@error_handler
+def download_cut_video(job_id):
+    """Download processed video file"""
+    try:
+        from utils.error_handlers import validate_job_id
+        job_id = validate_job_id(job_id)
+
+        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        if not job_data:
+            return jsonify({"error": "Job not found"}), 404
+
+        if job_data.get('status') != 'completed':
+            return jsonify({"error": "Job not completed"}), 400
+
+        output_video = job_data.get('output_video_file')
+        if not output_video or not os.path.exists(output_video):
+            return jsonify({"error": "Edited video not found"}), 404
+
+        return send_file(
+            output_video,
+            as_attachment=True,
+            download_name=f"edited_video_{job_id}.mp4",
+            mimetype='video/mp4'
+        )
+
+    except Exception as e:
+        logger.error(f"Download video error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/download-video-xml/<job_id>', methods=['GET'])
+@require_auth()
+@require_rate_limit("10 per minute, 100 per hour")
+@error_handler
+def download_video_xml(job_id):
+    """Download DaVinci Resolve XML timeline (placeholder for now)"""
+    try:
+        from utils.error_handlers import validate_job_id
+        job_id = validate_job_id(job_id)
+
+        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        if not job_data:
+            return jsonify({"error": "Job not found"}), 404
+
+        if job_data.get('status') != 'completed':
+            return jsonify({"error": "Job not completed"}), 400
+
+        # TODO: Implement VideoTimelineGenerator for DRT XML generation
+        # For MVP, return a placeholder message
+        return jsonify({
+            "message": "XML generation coming soon",
+            "note": "For now, download the edited video only"
+        }), 501
+
+    except Exception as e:
+        logger.error(f"Download video XML error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/video/system-check', methods=['GET', 'OPTIONS'])
+@cross_origin(origins="*")
+@error_handler
+def check_video_system():
+    """
+    Check if video processing system is ready (FFmpeg availability)
+
+    Returns:
+        {
+            'status': 'ready' | 'partial' | 'missing',
+            'ffmpeg_available': bool,
+            'ffprobe_available': bool,
+            'message': str,
+            'platform': str,
+            'install_instructions': {
+                'windows': str,
+                'macos': str,
+                'linux': str
+            },
+            'install_url': str,
+            'ffmpeg_version': str | None
+        }
+    """
+    try:
+        import subprocess
+        import platform
+
+        # Check FFmpeg
+        ffmpeg_available = False
+        ffmpeg_version = None
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-version'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+                timeout=5
+            )
+            ffmpeg_available = True
+            version_line = result.stdout.decode('utf-8').split('\n')[0]
+            ffmpeg_version = version_line
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Check FFprobe
+        ffprobe_available = False
+        try:
+            subprocess.run(
+                ['ffprobe', '-version'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+                timeout=5
+            )
+            ffprobe_available = True
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Determine platform
+        system = platform.system().lower()
+
+        # Installation instructions
+        install_instructions = {
+            'windows': (
+                "1. Download FFmpeg from https://www.gyan.dev/ffmpeg/builds/\n"
+                "2. Extract the ZIP file to C:\\ffmpeg\n"
+                "3. Add C:\\ffmpeg\\bin to your System PATH:\n"
+                "   - Search 'Environment Variables' in Windows\n"
+                "   - Edit 'Path' variable\n"
+                "   - Add new entry: C:\\ffmpeg\\bin\n"
+                "4. Restart your terminal/IDE\n"
+                "5. Click 'Retry Check' below"
+            ),
+            'macos': (
+                "1. Install Homebrew if not installed: https://brew.sh\n"
+                "2. Run: brew install ffmpeg\n"
+                "3. Click 'Retry Check' below"
+            ),
+            'linux': (
+                "Ubuntu/Debian:\n"
+                "  sudo apt-get update && sudo apt-get install ffmpeg\n\n"
+                "RHEL/CentOS:\n"
+                "  sudo yum install ffmpeg\n\n"
+                "Arch Linux:\n"
+                "  sudo pacman -S ffmpeg\n\n"
+                "After installation, click 'Retry Check' below"
+            )
+        }
+
+        # Determine install URL based on platform
+        if system == 'windows':
+            install_url = 'https://www.gyan.dev/ffmpeg/builds/'
+        elif system == 'darwin':
+            install_url = 'https://formulae.brew.sh/formula/ffmpeg'
+        else:
+            install_url = 'https://ffmpeg.org/download.html'
+
+        # Build response
+        if ffmpeg_available and ffprobe_available:
+            message = f"Video processing is ready. {ffmpeg_version}"
+            status = 'ready'
+        elif ffmpeg_available and not ffprobe_available:
+            message = "FFmpeg found but FFprobe is missing. Please install complete FFmpeg package."
+            status = 'partial'
+        else:
+            message = "FFmpeg is not installed. Video processing will not work until FFmpeg is installed."
+            status = 'missing'
+
+        return jsonify({
+            'status': status,
+            'ffmpeg_available': ffmpeg_available,
+            'ffprobe_available': ffprobe_available,
+            'message': message,
+            'platform': system,
+            'install_instructions': install_instructions,
+            'install_url': install_url,
+            'ffmpeg_version': ffmpeg_version
+        })
+
+    except Exception as e:
+        logger.error(f"System check error: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'ffmpeg_available': False,
+            'ffprobe_available': False,
+            'message': f"System check failed: {str(e)}",
+            'platform': 'unknown',
+            'install_instructions': {
+                'windows': 'System check error occurred',
+                'macos': 'System check error occurred',
+                'linux': 'System check error occurred'
+            },
+            'install_url': 'https://ffmpeg.org/download.html',
+            'ffmpeg_version': None
+        }), 500
+
 @app.errorhandler(413)
 def too_large(e):
     return jsonify({"error": "File too large"}), 413

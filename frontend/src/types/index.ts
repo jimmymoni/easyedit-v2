@@ -132,3 +132,93 @@ export interface KnowledgeBaseResponse {
 export interface KnowledgeBaseUpdateRequest {
   content_analysis: ContentAnalysis;
 }
+
+// Video Editor Types
+export interface VideoInfo {
+  duration: number;
+  size_mb: number;
+  width: number;
+  height: number;
+  fps: number;
+  codec: string;
+}
+
+export interface VideoSegment {
+  id: string;
+  start_time: number;
+  end_time: number;
+  duration: number;
+  text: string;
+  speaker?: string;
+  action: 'keep' | 'remove';
+  reason: string;
+  confidence: number;
+  has_repetition_marker?: boolean;
+  has_false_start?: boolean;
+  filler_density?: number;
+}
+
+export interface VideoAnalysisStats {
+  total_segments: number;
+  segments_to_keep: number;
+  segments_to_remove: number;
+  original_duration: number;
+  edited_duration: number;
+  time_saved: number;
+  compression_ratio: number;
+}
+
+export interface DetectedPatterns {
+  repetition_markers: number;
+  false_starts: number;
+  filler_heavy: number;
+}
+
+export interface VideoAnalysis {
+  segments: VideoSegment[];
+  stats: VideoAnalysisStats;
+  detected_patterns: DetectedPatterns;
+}
+
+export interface VideoUploadResponse {
+  job_id: string;
+  message: string;
+  video_filename: string;
+  video_info: VideoInfo;
+}
+
+export interface VideoJob {
+  job_id: string;
+  type: 'video_editing';
+  status: 'uploaded' | 'analyzing' | 'analyzed' | 'processing' | 'completed' | 'failed';
+  progress: number;
+  message: string;
+  created_at: number;
+  video_file?: string;
+  audio_file?: string;
+  output_video_file?: string;
+  output_xml_file?: string;
+  video_info?: VideoInfo;
+  transcription?: any;
+  analysis?: VideoAnalysis;
+}
+
+export interface SegmentAdjustment {
+  id: string;
+  action: 'keep' | 'remove';
+}
+
+export interface SystemCheckResponse {
+  status: 'ready' | 'partial' | 'missing';
+  ffmpeg_available: boolean;
+  ffprobe_available: boolean;
+  message: string;
+  platform: string;
+  install_instructions: {
+    windows: string;
+    macos: string;
+    linux: string;
+  };
+  install_url: string;
+  ffmpeg_version?: string;
+}

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { ProcessingJob, ProcessingOptions, UploadResponse, ProcessingResponse } from '../types';
+import { ProcessingJob, ProcessingOptions, UploadResponse, ProcessingResponse, VideoUploadResponse, VideoJob, VideoAnalysis, SegmentAdjustment, SystemCheckResponse } from '../types';
 
 // TEMPORARY: Testing minimal app on port 5000
 const API_BASE_URL = 'http://localhost:5000';
@@ -389,4 +389,121 @@ export const getAIPreview = async (jobId: string, params: Record<string, any>): 
     params: params,
   });
   return response.data;
+};
+
+// ==========================================
+// VIDEO EDITOR API METHODS
+// ==========================================
+
+export const uploadVideo = async (
+  videoFile: File,
+  onProgress?: (progress: UploadProgress) => void
+): Promise<VideoUploadResponse> => {
+  const formData = new FormData();
+  formData.append('video', videoFile);
+
+  const response = await api.post<VideoUploadResponse>('/video-upload', formData, {
+    onUploadProgress: (progressEvent) => {
+      if (onProgress && progressEvent.total) {
+        const percentage = (progressEvent.loaded / progressEvent.total) * 100;
+        const uploadSpeed = calculateUploadSpeed(progressEvent);
+        const estimatedTimeRemaining = calculateETA(progressEvent);
+
+        onProgress({
+          percentage,
+          uploadedBytes: progressEvent.loaded,
+          totalBytes: progressEvent.total,
+          uploadSpeed,
+          estimatedTimeRemaining,
+        });
+      }
+    },
+  });
+
+  return response.data;
+};
+
+export const analyzeVideo = async (jobId: string): Promise<any> => {
+  const response = await api.post(`/analyze-video/${jobId}`, {}, {
+    timeout: 900000, // 15 minutes for analysis
+  });
+  return response.data;
+};
+
+export const getVideoAnalysis = async (jobId: string): Promise<{
+  job_id: string;
+  status: string;
+  progress: number;
+  message: string;
+  analysis: VideoAnalysis;
+}> => {
+  const response = await api.get(`/video-analysis/${jobId}`);
+  return response.data;
+};
+
+export const applyVideoCuts = async (
+  jobId: string,
+  segmentAdjustments: SegmentAdjustment[],
+  encodingMethod: 'reencode' | 'lossless' = 'reencode'
+): Promise<any> => {
+  const response = await api.post(`/apply-video-cuts/${jobId}`, {
+    segment_adjustments: segmentAdjustments,
+    encoding_method: encodingMethod,
+  }, {
+    timeout: 1800000, // 30 minutes for video cutting
+  });
+  return response.data;
+};
+
+export const downloadCutVideo = async (jobId: string): Promise<void> => {
+  const response = await api.get(`/download-video/${jobId}`, {
+    responseType: 'blob',
+  });
+
+  // Create download link
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', `edited_video_${jobId}.mp4`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+/**
+ * Check if video processing system is ready (FFmpeg installed)
+ */
+export const checkVideoSystem = async (): Promise<SystemCheckResponse> => {
+  const response = await api.get<SystemCheckResponse>('/video/system-check');
+  return response.data;
+};
+
+export const downloadVideoXML = async (jobId: string): Promise<void> => {
+  const response = await api.get(`/download-video-xml/${jobId}`, {
+    responseType: 'blob',
+  });
+
+  // Create download link
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', `timeline_${jobId}.xml`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+// Helper functions for upload progress (reuse existing ones if available)
+const calculateUploadSpeed = (progressEvent: any): number => {
+  // Simple calculation: bytes per second
+  const timeElapsed = (Date.now() - progressEvent.timeStamp) / 1000;
+  return progressEvent.loaded / timeElapsed;
+};
+
+const calculateETA = (progressEvent: any): number => {
+  const uploadSpeed = calculateUploadSpeed(progressEvent);
+  const remaining = progressEvent.total! - progressEvent.loaded;
+  return remaining / uploadSpeed;
 };
