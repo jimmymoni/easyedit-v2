@@ -176,11 +176,6 @@ export default function VideoUploadZone({ onUploadComplete }: VideoUploadZonePro
             </svg>
             <div className="flex-1">
               <p className="text-destructive text-sm font-medium">{error}</p>
-              {error.toLowerCase().includes('ffmpeg') && (
-                <p className="text-destructive/70 text-xs mt-1">
-                  Please ensure FFmpeg is installed. Check the warning banner above for instructions.
-                </p>
-              )}
             </div>
           </div>
         </div>
@@ -209,11 +204,11 @@ export default function VideoUploadZone({ onUploadComplete }: VideoUploadZonePro
       <div className="bg-primary/5 border border-primary/10 rounded-xl p-5">
         <h3 className="text-sm font-semibold text-foreground mb-2">What happens next?</h3>
         <ul className="text-xs text-muted-foreground space-y-1.5 leading-relaxed">
-          <li>• Video will be uploaded (may take 5-15 minutes for large files)</li>
-          <li>• AI will transcribe the audio using Replicate Whisper</li>
-          <li>• Repeated takes, false starts, and fillers will be detected</li>
-          <li>• You'll review and approve the suggested cuts</li>
-          <li>• Final video will be processed and ready to download</li>
+          <li>• Secure upload to cloud servers (5-15 min for large files)</li>
+          <li>• AI automatically analyzes your video (no software required)</li>
+          <li>• Repeated takes and mistakes detected instantly</li>
+          <li>• Review suggested cuts and make adjustments</li>
+          <li>• Download your edited video and timeline</li>
         </ul>
       </div>
     </div>

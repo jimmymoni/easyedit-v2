@@ -4,16 +4,14 @@ import { useNavigate } from 'react-router-dom';
 import AuthButton from '../components/AuthButton';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../services/api';
-import { VideoJob, VideoAnalysis, SystemCheckResponse } from '../types';
+import { VideoJob, VideoAnalysis } from '../types';
 
 // Import video components
 import VideoUploadZone from '../components/video/VideoUploadZone';
 import VideoAnalysisProgress from '../components/video/VideoAnalysisProgress';
-import VideoSegmentPreview from '../components/video/VideoSegmentPreview';
-import FFmpegWarningBanner from '../components/video/FFmpegWarningBanner';
-import FFmpegErrorDisplay from '../components/video/FFmpegErrorDisplay';
+import VideoEditorWorkspace from '../components/video/VideoEditorWorkspace';
 
-type WorkflowStep = 'upload' | 'analyzing' | 'preview' | 'processing' | 'complete';
+type WorkflowStep = 'upload' | 'upload_complete' | 'analyzing' | 'preview' | 'processing' | 'complete';
 
 const VideoEditorPage: React.FC = () => {
   const navigate = useNavigate();
@@ -24,15 +22,28 @@ const VideoEditorPage: React.FC = () => {
   const [jobId, setJobId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<VideoAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hasViewedAnalysis, setHasViewedAnalysis] = useState(false);
 
   // Job polling
   const [isPolling, setIsPolling] = useState(false);
   const [currentJob, setCurrentJob] = useState<VideoJob | null>(null);
 
-  // System check state
-  const [systemCheck, setSystemCheck] = useState<SystemCheckResponse | null>(null);
-  const [isCheckingSystem, setIsCheckingSystem] = useState(false);
-  const [showFFmpegWarning, setShowFFmpegWarning] = useState(false);
+  // Auto-transition from upload_complete to analyzing after 2.5 seconds
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+
+    if (step === 'upload_complete') {
+      timeoutId = setTimeout(() => {
+        setStep('analyzing');
+      }, 2500);
+    }
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [step]);
 
   // Poll job status when in analyzing or processing state
   useEffect(() => {
@@ -96,7 +107,7 @@ const VideoEditorPage: React.FC = () => {
 
   const handleUploadComplete = (uploadJobId: string) => {
     setJobId(uploadJobId);
-    setStep('analyzing');
+    setStep('upload_complete');
     setError(null);
   };
 
@@ -139,32 +150,30 @@ const VideoEditorPage: React.FC = () => {
     setAnalysis(null);
     setError(null);
     setCurrentJob(null);
+    setHasViewedAnalysis(false);
   };
 
-  // Check FFmpeg availability on mount
-  useEffect(() => {
-    if (isAuthenticated && !authLoading) {
-      performSystemCheck();
-    }
-  }, [isAuthenticated, authLoading]);
+  // Sanitize error messages to remove technical jargon
+  const sanitizeError = (error: string): string => {
+    const lowerError = error.toLowerCase();
 
-  const performSystemCheck = async () => {
-    setIsCheckingSystem(true);
-    try {
-      const check = await api.checkVideoSystem();
-      setSystemCheck(check);
-      setShowFFmpegWarning(check.status !== 'ready');
-    } catch (err) {
-      console.error('System check failed:', err);
-      // If system check fails, assume FFmpeg might be missing
-      setShowFFmpegWarning(true);
-    } finally {
-      setIsCheckingSystem(false);
+    // FFmpeg-related errors
+    if (lowerError.includes('ffmpeg')) {
+      return 'Video processing failed. Please try again or contact support.';
     }
-  };
 
-  const handleRetrySystemCheck = async () => {
-    await performSystemCheck();
+    // Path or file system errors
+    if (lowerError.includes('path') || error.includes('/') || error.includes('\\')) {
+      return 'Upload failed. Please check your file and try again.';
+    }
+
+    // Generic long error messages
+    if (error.length > 100) {
+      return 'Something went wrong. Please try again.';
+    }
+
+    // Return original error if it's already user-friendly
+    return error;
   };
 
   return (
@@ -230,61 +239,135 @@ const VideoEditorPage: React.FC = () => {
           <div className="max-w-5xl mx-auto space-y-8">
             {/* Error Display */}
             {error && (
-              <FFmpegErrorDisplay
-                error={error}
-                platform={systemCheck?.platform}
-                installUrl={systemCheck?.install_url}
-                onRetry={handleRetrySystemCheck}
-                onDismiss={() => setError(null)}
-              />
-            )}
-
-            {/* FFmpeg Warning Banner */}
-            {showFFmpegWarning && systemCheck && !error && (
-              <FFmpegWarningBanner
-                systemCheck={systemCheck}
-                onRetry={handleRetrySystemCheck}
-                isRetrying={isCheckingSystem}
-              />
+              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 mb-6">
+                <div className="flex items-start space-x-3">
+                  <div className="flex-shrink-0">
+                    <svg className="h-6 w-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-sm font-medium text-red-500 mb-1">Something went wrong</h3>
+                    <p className="text-sm text-red-400">{sanitizeError(error)}</p>
+                  </div>
+                  <button
+                    onClick={() => setError(null)}
+                    className="text-red-400 hover:text-red-300 transition-colors"
+                  >
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
             )}
 
             {/* Step 1: Upload */}
             {step === 'upload' && (
-              <>
-                {isCheckingSystem && (
-                  <div className="bg-card rounded-xl border border-border p-8 text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-                    <p className="text-muted-foreground">Checking system requirements...</p>
-                  </div>
-                )}
-
-                {!isCheckingSystem && (
-                  <VideoUploadZone onUploadComplete={handleUploadComplete} />
-                )}
-              </>
+              <VideoUploadZone onUploadComplete={handleUploadComplete} />
             )}
 
-            {/* Step 2: Analyzing */}
+            {/* Step 2: Upload Complete */}
+            {step === 'upload_complete' && (
+              <div className="bg-card rounded-xl border border-border p-8 text-center">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-500/10 mb-4">
+                  <svg className="w-10 h-10 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-bold text-foreground mb-2">Upload Complete!</h3>
+                <p className="text-muted-foreground">
+                  Starting cloud analysis...
+                </p>
+              </div>
+            )}
+
+            {/* Step 3: Analyzing */}
             {step === 'analyzing' && jobId && (
               <VideoAnalysisProgress jobId={jobId} />
             )}
 
-            {/* Step 3: Preview Segments */}
-            {step === 'preview' && analysis && (
-              <VideoSegmentPreview
-                analysis={analysis}
-                onApply={handleApplyCuts}
-                onCancel={handleReset}
-              />
+            {/* Step 4: Analysis Ready or Timeline Editor */}
+            {step === 'preview' && analysis && jobId && (
+              <>
+                {!hasViewedAnalysis ? (
+                  // State 4: Analysis Ready
+                  <div className="bg-card rounded-xl border border-border p-8">
+                    <div className="text-center mb-6">
+                      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-500/10 mb-4">
+                        <svg className="w-10 h-10 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <h3 className="text-2xl font-bold text-foreground mb-2">Analysis Complete!</h3>
+                    </div>
+
+                    {/* Stats Preview */}
+                    <div className="bg-primary/5 border border-primary/10 rounded-xl p-6 mb-6 max-w-2xl mx-auto">
+                      <p className="text-sm text-muted-foreground mb-4 text-center leading-relaxed">
+                        Found {analysis.detected_patterns.repetition_markers} repeated takes and {analysis.detected_patterns.false_starts} false starts across {analysis.stats.total_segments} segments.
+                      </p>
+                      <div className="grid grid-cols-3 gap-4 text-center">
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Original</p>
+                          <p className="text-lg font-semibold text-foreground">
+                            {Math.floor(analysis.stats.original_duration / 60)}:{(analysis.stats.original_duration % 60).toString().padStart(2, '0')}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Suggested edit</p>
+                          <p className="text-lg font-semibold text-foreground">
+                            {Math.floor(analysis.stats.edited_duration / 60)}:{(analysis.stats.edited_duration % 60).toString().padStart(2, '0')}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Time saved</p>
+                          <p className="text-lg font-semibold text-green-500">
+                            {Math.floor(analysis.stats.time_saved / 60)}:{(analysis.stats.time_saved % 60).toString().padStart(2, '0')}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* CTA Button */}
+                    <div className="flex flex-col items-center gap-3">
+                      <button
+                        onClick={() => setHasViewedAnalysis(true)}
+                        className="flex items-center space-x-2 bg-primary text-primary-foreground hover:bg-primary/90 px-8 py-3 rounded-lg font-medium text-base transition-colors"
+                      >
+                        <span>Review Detected Segments</span>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={handleReset}
+                        className="text-sm text-muted-foreground hover:text-foreground underline transition-colors"
+                      >
+                        Start Over
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  // Timeline Editor Workspace
+                  <VideoEditorWorkspace
+                    analysis={analysis}
+                    audioUrl={currentJob?.audio_file ? `/api/audio/${jobId}` : undefined}
+                    jobId={jobId}
+                    onApply={handleApplyCuts}
+                    onCancel={handleReset}
+                  />
+                )}
+              </>
             )}
 
-            {/* Step 4: Processing */}
+            {/* Video Cutting: Processing */}
             {step === 'processing' && (
               <div className="bg-card rounded-xl border border-border p-8 text-center">
                 <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-primary mx-auto mb-4"></div>
-                <h3 className="text-xl font-semibold text-foreground mb-2">Processing Video</h3>
+                <h3 className="text-xl font-semibold text-foreground mb-2">Processing Video in the Cloud</h3>
                 <p className="text-muted-foreground">
-                  Cutting and encoding your video. This may take 5-10 minutes...
+                  Your video is being processed on cloud servers. This may take 5-10 minutes...
                 </p>
                 {currentJob && (
                   <div className="mt-4">
@@ -300,7 +383,7 @@ const VideoEditorPage: React.FC = () => {
               </div>
             )}
 
-            {/* Step 5: Complete */}
+            {/* Download: Complete */}
             {step === 'complete' && (
               <div className="bg-card rounded-xl border border-border p-8">
                 <div className="text-center mb-6">
