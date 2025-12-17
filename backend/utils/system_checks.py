@@ -16,51 +16,37 @@ class SystemChecker:
         self.checks_passed = []
         self.checks_failed = []
 
-    def check_ffmpeg(self) -> Tuple[bool, str]:
+    def check_replicate_api(self) -> Tuple[bool, str]:
         """
-        Check if ffmpeg is installed and accessible
+        Check if Replicate API token is configured (ZERO-INSTALL ARCHITECTURE)
+
+        With Replicate cloud APIs, no FFmpeg installation is needed!
+        All video processing happens via GPU-accelerated cloud APIs.
 
         Returns:
             Tuple of (success: bool, message: str)
         """
         try:
-            result = subprocess.run(
-                ['ffmpeg', '-version'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
+            import os
+            replicate_token = os.getenv('REPLICATE_API_TOKEN')
 
-            if result.returncode == 0:
-                # Extract version information
-                version_line = result.stdout.split('\n')[0] if result.stdout else "unknown version"
-                message = f"[OK] ffmpeg is available: {version_line}"
-                self.checks_passed.append('ffmpeg')
+            if replicate_token and len(replicate_token) > 20:
+                message = "[OK] Replicate API configured (cloud video processing enabled - no FFmpeg needed!)"
+                self.checks_passed.append('replicate_api')
                 return True, message
             else:
-                message = "[FAIL] ffmpeg command failed to execute"
-                self.checks_failed.append('ffmpeg')
+                message = (
+                    "[WARN] Replicate API token not configured.\n"
+                    "  Video processing features will be limited.\n"
+                    "  Get your token at: https://replicate.com/account/api-tokens\n"
+                    "  Add to backend/.env: REPLICATE_API_TOKEN=your_token_here"
+                )
+                self.checks_failed.append('replicate_api')
                 return False, message
 
-        except FileNotFoundError:
-            message = (
-                "[FAIL] ffmpeg not found. MP3/M4A/AAC audio format support will be unavailable.\n"
-                "  Installation instructions:\n"
-                "  - Windows: Download from https://www.gyan.dev/ffmpeg/builds/ and add to PATH\n"
-                "  - macOS: brew install ffmpeg\n"
-                "  - Linux: sudo apt-get install ffmpeg (Ubuntu/Debian) or sudo yum install ffmpeg (RHEL/CentOS)"
-            )
-            self.checks_failed.append('ffmpeg')
-            return False, message
-
-        except subprocess.TimeoutExpired:
-            message = "[FAIL] ffmpeg check timed out"
-            self.checks_failed.append('ffmpeg')
-            return False, message
-
         except Exception as e:
-            message = f"[FAIL] Error checking ffmpeg: {str(e)}"
-            self.checks_failed.append('ffmpeg')
+            message = f"[FAIL] Error checking Replicate API: {str(e)}"
+            self.checks_failed.append('replicate_api')
             return False, message
 
     def check_python_version(self, min_version: Tuple[int, int] = (3, 8)) -> Tuple[bool, str]:
@@ -171,8 +157,8 @@ class SystemChecker:
         else:
             results['summary']['passed'] += 1
 
-        # Check required packages
-        required_packages = ['flask', 'numpy', 'scipy', 'pydub']
+        # Check required packages (NEW Vision - YouTube Video Automation)
+        required_packages = ['flask', 'numpy', 'boto3', 'openai', 'replicate']
         success, missing = self.check_required_packages(required_packages)
         if success:
             message = f"[OK] All required packages installed: {', '.join(required_packages)}"
@@ -184,9 +170,9 @@ class SystemChecker:
             results['all_passed'] = False
             results['summary']['failed'] += 1
 
-        # Check ffmpeg (optional in non-strict mode)
-        success, message = self.check_ffmpeg()
-        results['checks'].append({'name': 'ffmpeg', 'passed': success, 'message': message})
+        # Check Replicate API (ZERO-INSTALL: No FFmpeg needed!)
+        success, message = self.check_replicate_api()
+        results['checks'].append({'name': 'Replicate API', 'passed': success, 'message': message})
 
         if not success:
             if strict:
@@ -195,7 +181,7 @@ class SystemChecker:
             else:
                 results['summary']['warnings'] += 1
                 # Add note about limited functionality
-                results['checks'][-1]['message'] += "\n  Note: Application will start but only WAV files will be supported."
+                results['checks'][-1]['message'] += "\n  Note: Application will start but video processing features will be unavailable."
         else:
             results['summary']['passed'] += 1
 

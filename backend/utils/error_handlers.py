@@ -45,6 +45,67 @@ class RateLimitError(APIError):
     def __init__(self, message: str = "Rate limit exceeded"):
         super().__init__(message, status_code=429)
 
+# Video-specific error classes (Phase 1)
+class VideoUploadError(APIError):
+    """Base class for video upload errors"""
+    def __init__(self, message: str, code: str = None):
+        super().__init__(message, status_code=400)
+        if code:
+            self.payload['code'] = code
+
+class VideoFileTooLargeError(VideoUploadError):
+    """File exceeds size limit"""
+    def __init__(self, file_size_mb: float, max_size_mb: int):
+        message = f"File size ({file_size_mb:.1f} MB) exceeds maximum allowed size ({max_size_mb} MB)"
+        super().__init__(message, code='FILE_TOO_LARGE')
+        self.payload['file_size_mb'] = file_size_mb
+        self.payload['max_size_mb'] = max_size_mb
+
+class VideoFormatNotSupportedError(VideoUploadError):
+    """File format not allowed"""
+    def __init__(self, format: str, allowed_formats: list):
+        message = f"Video format '{format}' is not supported. Allowed formats: {', '.join(allowed_formats)}"
+        super().__init__(message, code='INVALID_FORMAT')
+        self.payload['format'] = format
+        self.payload['allowed_formats'] = allowed_formats
+
+class VideoCodecNotSupportedError(VideoUploadError):
+    """Video codec not supported"""
+    def __init__(self, codec: str, allowed_codecs: list):
+        message = f"Video codec '{codec}' is not supported. Allowed codecs: {', '.join(allowed_codecs)}"
+        super().__init__(message, code='UNSUPPORTED_CODEC')
+        self.payload['codec'] = codec
+        self.payload['allowed_codecs'] = allowed_codecs
+
+class VideoCorruptedError(VideoUploadError):
+    """Video file is corrupted or unreadable"""
+    def __init__(self, details: str = None):
+        message = "Video file is corrupted or unreadable"
+        if details:
+            message += f": {details}"
+        super().__init__(message, code='CORRUPTED_FILE')
+
+class VideoTranscodeError(ProcessingError):
+    """Transcoding failed"""
+    def __init__(self, message: str, job_id: str = None):
+        super().__init__(message, job_id=job_id)
+        self.payload['code'] = 'TRANSCODE_FAILED'
+
+class FFmpegNotFoundError(APIError):
+    """FFmpeg not installed"""
+    def __init__(self):
+        message = "FFmpeg is not installed or not accessible. Please install FFmpeg to process video files."
+        super().__init__(message, status_code=500)
+        self.payload['code'] = 'FFMPEG_NOT_FOUND'
+
+class VideoJobNotFoundError(APIError):
+    """Video job not found"""
+    def __init__(self, job_id: str):
+        message = f"Video job not found: {job_id}"
+        super().__init__(message, status_code=404)
+        self.payload['code'] = 'JOB_NOT_FOUND'
+        self.payload['job_id'] = job_id
+
 def handle_api_error(error: APIError):
     """Handle custom API errors"""
     logger.error(f"API Error: {error.message}", exc_info=True)
@@ -179,7 +240,13 @@ def _validate_file_content(file_header: bytes, extension: str, filename: str):
         'aac': [b'\xff\xf1', b'\xff\xf9'],
         'flac': [b'fLaC'],
         'xml': [b'<?xml', b'<'],
-        'drt': [b'<?xml', b'<', b'PK']  # DRT can be XML or ZIP archive
+        'drt': [b'<?xml', b'<', b'PK'],  # DRT can be XML or ZIP archive
+        # Video formats
+        'mp4': [b'ftyp'],  # Check at offset 4
+        'mov': [b'ftyp'],  # Check at offset 4 (QuickTime/MOV)
+        'm4v': [b'ftyp'],  # Check at offset 4 (Apple M4V)
+        'avi': [b'RIFF'],  # AVI starts with RIFF, has 'AVI ' at offset 8
+        'mkv': [b'\x1a\x45\xdf\xa3'],  # Matroska/WebM EBML header
     }
 
     # Check if file content matches expected type
@@ -191,6 +258,16 @@ def _validate_file_content(file_header: bytes, extension: str, filename: str):
             if file_header.startswith(signature):
                 content_valid = True
                 break
+            # For MP4/MOV/M4V, check at offset 4 (after size field)
+            if extension in ['mp4', 'mov', 'm4v'] and len(file_header) >= 12:
+                if file_header[4:].startswith(signature):
+                    content_valid = True
+                    break
+            # For AVI, check for 'AVI ' at offset 8
+            if extension == 'avi' and len(file_header) >= 12:
+                if file_header.startswith(b'RIFF') and b'AVI ' in file_header[8:12]:
+                    content_valid = True
+                    break
 
         if not content_valid:
             # For XML/DRT files, be more lenient with whitespace

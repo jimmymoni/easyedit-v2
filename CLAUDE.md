@@ -4,47 +4,82 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is **easyedit-v2**, a platform that automates timeline edits based on source audio and timing XML (.drt) files. The goal is to ingest an audio file plus its accompanying XML timing file, apply cuts and edits programmatically, and generate a new .drt for DaVinci Resolve import.
+**EasyEdit v2** is an AI-powered YouTube video automation system that transforms raw talking-head videos (3GB+) into polished, multi-layer productions ready for DaVinci Resolve.
+
+### The Problem We're Solving
+
+Content creators record long-form videos (1-2 hours) with:
+- Multiple repeated takes of the same content
+- Green screen backgrounds that need replacement
+- Mix of talking head, screen demos, and abstract concepts
+- **Manual editing takes 4-6 hours per video**
+
+### Our Solution
+
+An automated pipeline that:
+1. **Accepts 3GB+ raw videos** (green screen talking-head footage)
+2. **Auto-detects repeated takes** using AI (keeps only the best version)
+3. **Classifies segments** into:
+   - Talking head (green screen)
+   - Demo/screen recording
+   - Abstract concepts (needs AI animation)
+4. **Generates AI animations** for abstract segments
+5. **Creates multi-layer timeline** (4 layers for DaVinci Resolve)
+6. **Exports DaVinci Resolve XML** for final polishing
+
+**Target Workflow**: Reduce editing time from **4-6 hours** to **~1 hour** (20 min processing + 30 min polishing)
+
+---
 
 ## Architecture
 
 ### Backend (Flask + Python 3.13)
-- **API**: Flask REST API with JWT authentication
-- **Transcription**: Replicate Whisper (incredibly-fast-whisper + pyannote diarization) - $0.078/hour
-- **AI Enhancement**: OpenAI GPT-4 (transcript improvement, highlights, summaries, chapters)
-- **Audio Processing**: Scipy-based SimpleAudioAnalyzer (energy detection, silence removal, optimal cut points)
-- **Task Queue**: Celery with Redis (async job processing)
-- **Audio Formats**: FFmpeg for multi-format support (WAV, MP3, M4A, AAC, FLAC)
-- **Security**: XXE protection (defusedxml), path traversal prevention, rate limiting, resource controls
 
-### Frontend (React + TypeScript)
-- **Framework**: React 18 + TypeScript + Tailwind CSS
+- **Web Framework**: Flask REST API with JWT authentication
+- **Cloud Storage**: AWS S3 (chunked uploads for 3GB+ files)
+- **AI Processing**:
+  - Replicate Whisper (transcription + speaker diarization) - $0.078/hour
+  - OpenAI GPT-4 Vision (segment classification, script analysis)
+  - Replicate models (AI animation generation)
+- **Video Processing**: FFmpeg (transcoding, audio extraction, composition)
+- **Task Queue**: Celery with Redis (background jobs)
+- **Storage Strategy**:
+  - S3: Original 3GB videos, proxy videos
+  - Local: Temporary processing files
+  - Redis/File: Job metadata, upload sessions
+
+### Frontend (React 18 + TypeScript)
+
+- **Framework**: React + TypeScript + Tailwind CSS
 - **Build Tool**: Vite (fast development builds)
-- **API Client**: Axios with automatic JWT token refresh
-- **Waveform Visualization**: WaveSurfer.js for interactive audio editing
-- **Design System**: Professional dark UI with orange brand identity (#FF6B35)
+- **Upload**: Uppy.js (chunked upload with progress tracking)
+- **API Client**: Axios with JWT token refresh
+- **Design**: Professional dark UI with orange (#FF6B35) brand
 
 ### Key Workflow
 
-**REQUIRED INPUTS:**
-- ⚠️ **Audio file** (WAV, MP3, M4A, AAC, or FLAC) - **MANDATORY**
-- ⚠️ **DaVinci Resolve timeline file** (.drt or .xml) - **MANDATORY**
+```
+User uploads 3GB video → S3 chunked upload (10MB chunks)
+↓
+Backend triggers processing:
+  1. AWS MediaConvert transcoding (create 1080p H.264 proxy video) - ~$0.90/2hr
+  2. Replicate audio extraction (16kHz WAV for Whisper) - ~$0.02
+  3. Whisper transcription (speaker diarization via Replicate) - ~$0.08/hr
+  4. Repeated take detection (keep best versions)
+  5. Segment classification (talking head / demo / abstract via GPT-4 Vision)
+  6. AI animation generation (for abstract segments)
+  7. Multi-layer timeline compositor (4 layers)
+  8. DaVinci Resolve XML export
+↓
+User downloads XML → Import to DaVinci Resolve → Final polish
+```
 
-**Both files must be uploaded together.** This application **edits existing timelines**, it does **not** generate new timelines from audio alone.
-
-**Processing Steps:**
-  1. Receive `POST /upload` with **both** `audio` and `drt` files (BOTH REQUIRED)
-  2. Transcribe audio with Replicate Whisper (speaker diarization)
-  3. Parse `.drt` XML to extract existing timeline structure and segment timings
-  4. Analyze audio for silence, speech segments, optimal cut points
-  5. Apply AI enhancement (OpenAI) for highlights, summaries, chapters
-  6. Apply intelligent editing rules to timeline data
-  7. Generate new `.drt` XML reflecting edits
-  8. Return edited `.drt` for DaVinci Resolve import
+---
 
 ## Development Commands
 
 ### Environment Setup
+
 ```bash
 # Activate virtual environment (Windows)
 venv\Scripts\activate
@@ -60,57 +95,56 @@ pip install -r requirements.txt
 cd frontend
 npm install
 
-# Install ffmpeg (required for MP3/M4A/AAC support)
-# Windows: Download from https://www.gyan.dev/ffmpeg/builds/ and add to PATH
-# macOS: brew install ffmpeg
-# Linux: sudo apt-get install ffmpeg
+# ✅ NO FFMPEG INSTALLATION NEEDED!
+# Video processing uses cloud APIs only:
+# - AWS MediaConvert for transcoding (production-grade)
+# - Replicate for audio extraction and utilities
 ```
 
-### Audio Format Support
+**Hybrid Cloud Architecture:**
+Video transcoding via AWS MediaConvert (GPU-accelerated, enterprise-grade).
+Audio extraction via Replicate (cost-effective, fast).
+No need to install FFmpeg, codecs, or any external dependencies!
 
-The application supports multiple audio formats:
-- **WAV** (always supported, no dependencies required)
-- **MP3** (requires ffmpeg)
-- **M4A/AAC** (requires ffmpeg)
-- **FLAC** (requires ffmpeg)
+🚀 **Faster:** AWS GPU acceleration + Replicate cloud processing
+💰 **Cost:** ~$1.00 per 2-hour video (~$0.90 MediaConvert + ~$0.10 Replicate)
+📦 **Deploy Anywhere:** Vercel, Netlify, Railway, Render (no FFmpeg required)
+🏢 **Production-Ready:** AWS MediaConvert used by Netflix, Prime Video, Disney+
 
-**Installing ffmpeg:**
+### Environment Variables
 
-- **Windows**:
-  1. Download from https://www.gyan.dev/ffmpeg/builds/
-  2. Extract the archive
-  3. Add the `bin` folder to your system PATH
-  4. Restart your terminal/IDE
+Create a `.env` file in `backend/` directory (NOT root):
 
-- **macOS**:
-  ```bash
-  brew install ffmpeg
-  ```
-
-- **Linux (Ubuntu/Debian)**:
-  ```bash
-  sudo apt-get update
-  sudo apt-get install ffmpeg
-  ```
-
-- **Linux (RHEL/CentOS)**:
-  ```bash
-  sudo yum install ffmpeg
-  ```
-
-**Verifying ffmpeg installation:**
 ```bash
-ffmpeg -version
+# AWS S3 Credentials (REQUIRED)
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_REGION=us-east-1
+S3_VIDEO_BUCKET=easyedit-videos
+
+# AWS MediaConvert (REQUIRED for video transcoding)
+AWS_MEDIACONVERT_ROLE_ARN=arn:aws:iam::YOUR_ACCOUNT_ID:role/EasyEditMediaConvertRole
+
+# AI API Keys (REQUIRED)
+OPENAI_API_KEY=your_openai_api_key_here
+REPLICATE_API_TOKEN=your_replicate_token_here
+
+# Optional Configuration
+MAX_FILE_SIZE_MB=5120  # 5GB max
+S3_CHUNK_SIZE_MB=10
+S3_PRESIGNED_URL_EXPIRATION=86400  # 24 hours
+AWS_MEDIACONVERT_QUEUE=Default  # MediaConvert queue (default: Default)
+LOG_LEVEL=INFO
 ```
 
-If ffmpeg is not installed, the application will:
-- Start successfully but display a warning
-- Only support WAV files
-- Reject MP3/M4A/AAC uploads with a clear error message
+**CRITICAL**: Always edit `backend/.env` (not root `.env`) for backend configuration!
+
+**AWS MediaConvert Setup**: See [AWS_MEDIACONVERT_SETUP.md](./AWS_MEDIACONVERT_SETUP.md) for detailed IAM role setup instructions.
 
 ### Running the Application
 
 #### Development Mode
+
 ```bash
 # Terminal 1 - Backend
 cd backend
@@ -121,7 +155,11 @@ cd frontend
 npm run dev
 ```
 
+Backend runs on: `http://localhost:5000`
+Frontend runs on: `http://localhost:5173`
+
 #### Production Mode with Docker
+
 ```bash
 # Build and run with Docker Compose
 docker-compose up --build
@@ -136,139 +174,248 @@ docker-compose logs -f
 docker-compose down
 ```
 
-### Environment Variables
+### Testing
 
-Create a `.env` file in the project root:
 ```bash
-# Required API Keys
-SONIOX_API_KEY=your_soniox_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
+cd backend
 
-# Optional Configuration
-MAX_FILE_SIZE_MB=500
-TEMP_FILE_RETENTION_HOURS=24
-MIN_CLIP_LENGTH_SECONDS=5
-SILENCE_THRESHOLD_DB=-40
-LOG_LEVEL=INFO
+# Test 1: AWS credentials and S3 access
+python test_aws_credentials.py
+
+# Test 2: Pre-signed URL generation
+python test_presigned_url.py
+
+# Test 3: Multipart upload mechanism
+python test_multipart_presigned.py
+
+# Test 4: Full upload flow (end-to-end)
+python test_s3_upload.py
 ```
 
-### API Endpoints
+All tests should pass ✅
 
-#### Core Endpoints
-- `POST /upload` - Upload audio and DRT files for processing
-- `POST /process/<job_id>` - Start timeline processing with options
-- `GET /status/<job_id>` - Get processing status and progress
-- `GET /download/<job_id>` - Download processed .drt file
+---
 
-#### Management Endpoints
-- `GET /health` - Comprehensive health check with system metrics
-- `GET /metrics` - System performance and usage metrics
-- `GET /jobs` - List recent processing jobs
-- `GET /ai-enhancements/<job_id>` - Get AI enhancement details
-- `GET /preview/<job_id>` - Preview processing without executing
-- `POST /cleanup` - Manually trigger file cleanup
+## API Endpoints
 
-#### Rate Limits
+### Upload Endpoints (S3 Chunked Upload)
+
+- **POST /upload/init** - Initialize chunked upload
+  - Generates pre-signed S3 URLs (10MB chunks)
+  - Creates VideoJob + VideoUploadSession
+  - Returns `{job_id, chunk_urls[]}`
+
+- **POST /upload/chunk-complete** - Mark chunk uploaded
+  - Tracks progress (e.g., 150/300 = 50%)
+  - Stores ETag for each chunk
+
+- **POST /upload/complete** - Finalize upload
+  - Tells S3 to combine all chunks
+  - Triggers background transcoding
+  - Returns 202 Accepted
+
+- **POST /upload/resume** - Get resume info
+  - Returns completed_chunks + missing_chunks
+  - Allows client to resume interrupted uploads
+
+- **POST /upload/abort** - Cancel upload
+  - Aborts S3 multipart upload
+  - Cleans up temporary data
+
+### Video Processing Endpoints
+
+- **POST /process/{job_id}** - Start video processing
+- **GET /status/{job_id}** - Get processing status and progress
+- **GET /download/{job_id}** - Download processed DRT XML file
+
+### Management Endpoints
+
+- **GET /health** - Comprehensive health check with system metrics
+- **GET /metrics** - System performance and usage metrics
+- **GET /jobs** - List recent processing jobs
+- **POST /cleanup** - Manually trigger file cleanup
+
+### Authentication
+
+- **POST /auth/demo-token** - Get demo JWT token (development only)
+
+All endpoints (except `/auth/demo-token`) require JWT authentication:
+```bash
+Authorization: Bearer <your_jwt_token>
+```
+
+### Rate Limits
+
+- Upload init: 10 requests/minute
+- Chunk complete: 100 requests/minute
 - General API: 60 requests/minute, 1000 requests/hour
-- Upload: 5 requests/minute, 50 requests/hour
-- Processing: 2 requests/minute, 20 requests/hour
-- Download: 10 requests/minute, 100 requests/hour
+
+---
 
 ## Project Structure
 
 ### Backend (`backend/`)
-- `app.py` - Main Flask application with comprehensive error handling
-- `config.py` - Configuration management with environment variables
-- `models/` - Data models for Timeline, Track, and Clip objects
-- `parsers/` - DRT file parsing and writing utilities
-  - **CRITICAL XML STRUCTURE RULES** (DaVinci Resolve compatibility):
-    1. **Root Structure**: `<xmeml><sequence>` (NO `<project><children>` wrappers)
-    2. **Canonical File Block**: Defined ONCE in `<media>` section (after all tracks)
-    3. **Clipitem References**: ALL clips reference file by ID (`<file id="file-1"/>` self-closing)
-    4. **Audio Tracks**: Must exist with matching clipitems for each video clip
-    5. **In/Out Values**: Must reflect actual source media positions (not all zeros)
-  - **Fixed 2025-11-29**: Canonical file block now correctly placed in `<media>` (not in first clipitem)
-  - **Validation**: Run `backend/test_xml_structure_fix.py` to verify XML structure
-  - Repair script available: `scripts/repair_xml_structure.py` for fixing old broken XMLs
-- `services/` - Core business logic (audio analysis, AI, editing rules)
-- `utils/` - Production utilities (logging, monitoring, rate limiting)
-- `requirements.txt` - Python dependencies
-- `Dockerfile` - Container configuration
+
+```
+backend/
+├── app.py                              # Main Flask application (3426+ lines)
+├── config.py                           # Configuration with S3 settings
+├── models/
+│   ├── video_job.py                    # Job tracking model
+│   ├── video_upload_session.py         # Upload session tracking
+│   └── timeline.py                     # Timeline data structure (for XML export)
+├── services/
+│   ├── s3_upload_manager.py            # S3 multipart upload (526 lines) ✅
+│   ├── video_transcoder.py             # FFmpeg video processing
+│   ├── replicate_video_client.py       # AI video processing
+│   ├── repeated_take_detector.py       # Duplicate detection
+│   ├── video_ai_operations.py          # Segment classification
+│   ├── waveform_generator.py           # Audio waveform generation
+│   └── ai_chat_handler.py              # AI chat interface
+├── parsers/
+│   ├── xml_writer.py                   # DaVinci Resolve XML writer ✅
+│   ├── canonical_extractor.py          # Helper for XML writing ✅
+│   └── fcp7_xml_writer.py              # FCP7/DaVinci XML format
+├── utils/
+│   ├── error_handlers.py               # Error handling utilities
+│   └── ffmpeg_helpers.py               # FFmpeg wrapper functions
+├── test_aws_credentials.py             # AWS setup validation ✅
+├── test_s3_upload.py                   # Upload flow test ✅
+├── test_presigned_url.py               # URL generation test ✅
+├── test_multipart_presigned.py         # Multipart upload test ✅
+└── requirements.txt                    # Python dependencies
+```
+
+**CRITICAL XML EXPORT RULES** (DaVinci Resolve compatibility):
+1. **Canonical File Block**: Defined ONCE in `<media>` section (after all tracks)
+2. **Clipitem References**: ALL clips reference file by ID (`<file id="file-1"/>` self-closing)
+3. **Audio Tracks**: Must exist with matching clipitems for each video clip
+4. **In/Out Values**: Must reflect actual source media positions (not all zeros)
+5. **Sequential Positioning**: No gaps or overlaps in cumulative clip positions
+6. **Sequence Duration**: Must match last clip end time
 
 ### Frontend (`frontend/`)
-- `src/App.tsx` - Main React application
-- `src/components/` - React components for UI
-- `src/services/api.ts` - API client with axios
-- `src/types/` - TypeScript type definitions
-- `package.json` - Node.js dependencies
-- `Dockerfile` - Container configuration
 
-### Infrastructure
-- `docker-compose.yml` - Multi-container deployment
-- `nginx.conf` - Reverse proxy and load balancing
-- `.env.example` - Environment variable template
+```
+frontend/
+├── src/
+│   ├── App.tsx                         # Main React application
+│   ├── components/
+│   │   └── video/
+│   │       ├── VideoEditorWorkspace.tsx   # Main editor workspace
+│   │       ├── VideoUploadZone.tsx        # File upload component (Uppy.js)
+│   │       ├── WaveformViewer.tsx         # Audio waveform display
+│   │       └── TimelineEditor.tsx         # Timeline editing interface
+│   ├── services/
+│   │   └── api.ts                      # API client with axios
+│   ├── types/
+│   │   └── index.ts                    # TypeScript type definitions
+│   └── pages/
+│       └── VideoTestPage.tsx           # Video editor test page
+├── package.json                        # Node.js dependencies
+└── vite.config.ts                      # Vite configuration
+```
+
+---
 
 ## Production Features
 
+### S3 Chunked Upload System ✅ COMPLETE
+
+**Architecture**:
+- Chunk Size: 10MB
+- Max File Size: 5GB (configurable to 10GB)
+- Max Chunks: 500 (for 5GB file)
+- Parallel Uploads: 5 concurrent chunks
+- URL Expiration: 24 hours
+- Stale Upload Cleanup: 48 hours
+
+**Upload Flow**:
+```
+1. Frontend: POST /upload/init {filename, file_size}
+   Backend: Create S3 multipart upload
+   Backend: Generate 500 pre-signed URLs (10MB each)
+   Response: {job_id, chunk_urls[]}
+
+2. Frontend: Upload chunks DIRECTLY to S3 (5 parallel)
+   S3: Returns ETag for each chunk
+
+3. Frontend: POST /upload/chunk-complete {job_id, part_number, etag}
+   Backend: Track progress (e.g., 250/500 = 50%)
+
+4. Frontend: POST /upload/complete {job_id}
+   Backend: Tell S3 to combine all chunks
+   S3: Creates final 5GB video file
+   Backend: Trigger transcoding
+```
+
+**Cost per 3GB upload**:
+- 300 PUT requests: $0.0015
+- Temporary storage: ~$0 (deleted after transcode)
+- **Total: ~$0.002 per upload**
+
+### Security & Reliability
+
+- JWT authentication on all endpoints
+- Rate limiting per endpoint and client
+- File size validation (max 5GB)
+- Pre-signed URL expiration (24 hours)
+- Filename sanitization
+- CORS configured (PUT, POST, ETag exposed)
+- Input validation and sanitization
+- Error handling with detailed logging
+
 ### Monitoring & Health Checks
+
 - System resource monitoring (CPU, memory, disk)
 - API request metrics and error tracking
 - Processing job success/failure rates
-- External dependency health checks (Soniox, OpenAI APIs)
+- External dependency health checks (AWS S3, OpenAI, Replicate APIs)
 - Comprehensive logging with rotation
 
-### Security & Reliability
-- Rate limiting per endpoint and client
-- File validation and size limits
-- Circuit breakers for external API calls
-- Input validation and sanitization
-- Error handling with detailed logging
-- CORS configuration for frontend integration
-
-### Performance Optimization
-- Request/response compression
-- Static asset caching
-- Background job processing
-- Automatic file cleanup
-- Performance logging and metrics
-
-### Deployment
-- Docker containerization
-- Multi-stage builds for optimization
-- Health checks and restart policies
-- Nginx reverse proxy with rate limiting
-- Environment-based configuration
+---
 
 ## 🎯 Current System Status
 
-**Backend: ✅ PRODUCTION READY**
-- Flask REST API with JWT auth (Python 3.13)
-- **Transcription**: Replicate Whisper (PRIMARY $0.078/hr) + Google Cloud STT V1 (BACKUP $1.62/hr)
-- **AI Enhancement**: OpenAI GPT-4 (transcript, highlights, summaries, chapters)
-- **Audio**: scipy-based SimpleAudioAnalyzer + FFmpeg (WAV/MP3/M4A/AAC/FLAC)
-- **God Mode**: AI conversational editor with real audio extraction
-- **Security**: XXE protection, path validation, rate limiting, resource controls
+### ✅ Completed (Week 1, Day 1)
 
-**Frontend: ✅ PRODUCTION READY**
-- React 18 + TypeScript + Tailwind CSS
-- JWT auth with auto-refresh
-- WaveSurfer.js waveform visualization (original vs edited)
-- God Mode chat interface
-- Professional dark UI (#FF6B35 brand)
+**S3 Chunked Upload System** - 100% Complete
+- ✅ S3UploadManager service (526 lines)
+- ✅ VideoUploadSession model (226 lines)
+- ✅ 5 API endpoints (init, chunk-complete, complete, resume, abort)
+- ✅ Full test suite (4 tests, all passing)
+- ✅ AWS infrastructure configured
+- ✅ Regional endpoint fix applied (eu-north-1)
 
-**Key Features**:
-- Natural language editing ("make a montage of 'best moments'")
-- Real audio extraction/concatenation (FFmpeg)
-- Timeline preview (tight/normal/loose cuts)
-- DRT XML generation
-- Interactive waveform viewer
+### 🔄 In Progress (Week 1, Day 2-3)
 
-**Development History**: See [SESSION_HISTORY.md](./SESSION_HISTORY.md) for detailed session logs
+**Frontend Integration** - Next Up
+- [ ] Uppy.js upload component
+- [ ] Progress tracking UI
+- [ ] Resume functionality after network failure
+- [ ] Cancel/abort upload option
 
-**Next Priorities**:
-1. **UI/UX**: Processing time estimates, Shadcn UI, Playwright testing
-2. **Testing**: Real data validation with Malayalam/English content
-3. **Deploy**: Docker Compose, Redis, Nginx, cloud deployment
+### 📅 Upcoming
+
+**Week 1, Day 4-5: Multi-Layer XML Writer**
+- [ ] Extend FCP7XMLWriter for 4-layer support
+- [ ] Test with DaVinci Resolve
+
+**Week 2, Day 1-2: AI Segment Classification**
+- [ ] GPT-4 Vision for frame analysis
+- [ ] Classify segments (talking head / demo / abstract)
+
+**Week 2, Day 3-4: Repeated Take Detector**
+- [ ] Detect duplicate takes using transcription
+- [ ] Score and keep best versions
+
+**Week 2, Day 5: Timeline Compositor**
+- [ ] Auto-generate 4-layer timeline
+- [ ] Export DaVinci Resolve XML
+
+**Overall Progress**: ~5% complete (foundational infrastructure done)
+
+---
 
 ## 🎨 Design System
 
@@ -280,50 +427,151 @@ LOG_LEVEL=INFO
 - White cards: `bg-card` | Dark surfaces: `bg-[#181818]`
 - Cards: `rounded-xl` (12px) | Spacing: `p-6` or `p-8`
 
-**Reference Components**: `UploadProgress.tsx`, `ProcessingOptionsTable.tsx`, `AudioUploadZone.tsx`
+**Reference Components**: `UploadProgress.tsx`, `ProcessingOptionsTable.tsx`, `VideoUploadZone.tsx`
+
+---
 
 ## 🔍 Tech Stack Quick Reference
 
-### Transcription
-1. **Replicate Whisper** (PRIMARY) - `backend/services/replicate_whisper_client.py`
-   - Cost: $0.078/hr | Model: incredibly-fast-whisper + pyannote diarization
-   - **CRITICAL**: Custom `httpx.Timeout(write=600.0)` to prevent upload timeouts
+### Cloud Storage
+- **AWS S3** - `backend/services/s3_upload_manager.py`
+  - Multipart upload for 3GB+ files
+  - Pre-signed URLs for direct client upload
+  - Automatic cleanup of stale uploads
+  - **CRITICAL**: Must use regional endpoint (`https://s3.{region}.amazonaws.com`)
 
-2. **Google Cloud STT V1** (BACKUP) - `backend/services/google_stt_v1_client.py`
-   - Cost: $1.62/hr | 125+ languages, Indian English optimization
+### Video Processing (HYBRID CLOUD: AWS + Replicate)
+- **AWS MediaConvert** - `backend/services/aws_mediaconvert_service.py`
+  - **H.264 Transcoding**: Enterprise-grade GPU-accelerated transcoding
+  - **Production Quality**: Baseline H.264 profile for maximum compatibility
+  - **Web Optimized**: Progressive download (fast start) enabled
+  - **Cost**: ~$0.0075/minute (~$0.90 per 2-hour video)
+  - **Used by**: Netflix, Prime Video, Disney+
+  - **No FFmpeg installation required!** ✅
 
-### AI Enhancement
-- **OpenAI GPT-4** - `backend/services/openai_client.py`
-- Transcript improvement, highlights, summaries, chapters
+- **Replicate APIs** - `backend/services/replicate_video_processor.py`
+  - **Audio Extraction**: High-quality WAV extraction for Whisper
+  - **Video Merging**: Combine segments after repeated take removal
+  - **Models Used**:
+    - `lucataco/extract-audio` - Audio extraction (~$0.02 per video)
+    - `foixasoftware/ffmpeg` - Video merging (~$0.05 per concatenation)
+  - **Cost**: ~$0.07 per 3GB video (utilities only)
+  - **No FFmpeg installation required!** ✅
 
-### Audio Processing
-- **SimpleAudioAnalyzer** - `backend/services/simple_audio_analyzer.py`
-- Scipy-based (Python 3.13), energy detection, silence removal, cut points
+**Total Cost per 3GB Video**: ~$1.00 (~$0.90 MediaConvert + ~$0.10 Replicate + AI operations)
 
-### God Mode AI Editor
+### AI Services
+1. **Replicate Whisper** - `backend/services/replicate_video_client.py`
+   - Cost: $0.078/hr
+   - Model: incredibly-fast-whisper + pyannote diarization
+   - Transcription + speaker identification
 
-**Components**:
-- `backend/services/ai_chat_handler.py` - GPT-4 intent detection
-- `backend/services/ai_editor.py` - Timeline transformation
-- `backend/services/audio_extractor.py` - FFmpeg audio extraction
-- `backend/system_prompts/godmode_adaptive.txt` - AI behavior rules (119 lines)
+2. **OpenAI GPT-4 Vision** - `backend/services/video_ai_operations.py`
+   - Segment classification (talking head / demo / abstract)
+   - Script analysis and optimization
+   - Chapter generation
 
-**Supported Commands**:
-1. **Short-form** (Instagram/TikTok/Shorts): "make a 60s reel" → 30-90s clips
-2. **Montage**: "compile all 'money in the bank'" → phrase compilation (tight/normal/loose)
-3. **Filler removal**: "remove um and uh" → detects um, uh, like, you know, etc.
-4. **Silence**: "remove silence >2s" → cuts long pauses
-5. **Speaker filter**: "keep only Speaker 1" → speaker-based filtering
+3. **Replicate AI Models** - For animation generation
+   - AI-generated backgrounds for abstract segments
+   - Scene composition
 
-**API Endpoints**:
-- `POST /ai-chat` - Natural language message → options
-- `POST /ai-preview` - Preview cuts before execution
-- `POST /ai-edit` - Execute edit (timeline + audio)
-- `GET /timeline-comparison/<job_id>` - Original vs edited diff
-- `GET /audio/<job_id>/edited` - Edited audio file
+### DaVinci Resolve XML Export
+- **FCP7XMLWriter** - `backend/parsers/fcp7_xml_writer.py`
+  - Generates DaVinci Resolve compatible XML
+  - Multi-layer timeline support (4 tracks)
+  - Proper canonical file block structure
+  - Sequential clip positioning
 
-**Workflow**: Message → GPT-4 intent → Options → Preview → Execute → Timeline + Audio + DRT
+---
 
-**Requirements**: Completed job + transcription (for montage/speaker), OpenAI API key (for short-form)
+## 🐛 Critical Issues & Solutions
 
-**Limitations**: 4000 char transcript limit, English-only fillers, number-based speakers only
+### Issue: SignatureDoesNotMatch (403) on S3 presigned URLs
+
+**Root Cause**: boto3 defaults to global S3 endpoint which causes signature mismatches for regional buckets.
+
+**Solution**: Use regional endpoint in boto3 client:
+```python
+self.s3_client = boto3.client(
+    's3',
+    region_name=Config.AWS_REGION,
+    endpoint_url=f'https://s3.{Config.AWS_REGION}.amazonaws.com'  # This fixes it
+)
+```
+
+### Issue: Backend can't find .env file
+
+**Problem**: Two `.env` files exist (root and backend/)
+
+**Solution**: Always edit `backend/.env` (NOT root `.env`)
+
+### Issue: boto3 not installed
+
+**Solution**:
+```bash
+cd backend
+pip install boto3==1.42.11 botocore==1.42.11
+```
+
+---
+
+## 📊 Success Metrics
+
+### Week 1 Goals:
+- [x] S3 upload handles 3GB+ files ✅
+- [ ] Frontend shows upload progress
+- [ ] Can generate 4-layer XML
+- [ ] XML imports into DaVinci Resolve
+
+### Week 2 Goals:
+- [ ] AI classifies segments accurately (>90%)
+- [ ] Repeated takes are detected
+- [ ] Timeline is auto-generated
+- [ ] Full pipeline: Upload → Process → Export XML
+
+### Final Success:
+- [ ] 3GB video → 4-layer timeline in <20 minutes
+- [ ] No manual intervention required
+- [ ] DaVinci Resolve import is clean
+- [ ] Cost per video <$1
+
+---
+
+## 📚 Additional Documentation
+
+- **[DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md)** - UI/UX design standards
+- **[NEXT_SESSION_PROMPT_COMPLETE.md](./NEXT_SESSION_PROMPT_COMPLETE.md)** - Current roadmap and session context
+- **[VIDEO_UPLOAD_RESEARCH.md](./VIDEO_UPLOAD_RESEARCH.md)** - Technical reference for S3 uploads
+
+---
+
+## 💡 Quick Start for Development
+
+### Test S3 Upload System
+```bash
+cd backend
+python test_aws_credentials.py    # Verify AWS setup
+python test_s3_upload.py           # Test full upload flow
+```
+
+### Get Demo Token
+```bash
+curl http://localhost:5000/auth/demo-token
+```
+
+### Upload Test Video
+```bash
+curl -X POST http://localhost:5000/upload/init \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "test.mp4", "file_size": 104857600}'
+```
+
+### Check Backend Health
+```bash
+curl http://localhost:5000/health
+```
+
+---
+
+**For detailed session history and technical deep-dives, see [NEXT_SESSION_PROMPT_COMPLETE.md](./NEXT_SESSION_PROMPT_COMPLETE.md)**

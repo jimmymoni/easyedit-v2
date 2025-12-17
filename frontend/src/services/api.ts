@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { ProcessingJob, ProcessingOptions, UploadResponse, ProcessingResponse, VideoUploadResponse, VideoJob, VideoAnalysis, SegmentAdjustment, SystemCheckResponse } from '../types';
+import { ProcessingJob, ProcessingOptions, UploadResponse, ProcessingResponse, VideoUploadResponse, VideoJob, VideoAnalysis, SegmentAdjustment, SystemCheckResponse, VideoProxyStatus, WaveformData } from '../types';
 
 // TEMPORARY: Testing minimal app on port 5000
 const API_BASE_URL = 'http://localhost:5000';
@@ -402,7 +402,8 @@ export const uploadVideo = async (
   const formData = new FormData();
   formData.append('video', videoFile);
 
-  const response = await api.post<VideoUploadResponse>('/video-upload', formData, {
+  // Phase 2: Use cloud-first upload endpoint (no FFmpeg required)
+  const response = await api.post<VideoUploadResponse>('/upload-video', formData, {
     onUploadProgress: (progressEvent) => {
       if (onProgress && progressEvent.total) {
         const percentage = (progressEvent.loaded / progressEvent.total) * 100;
@@ -506,4 +507,103 @@ const calculateETA = (progressEvent: any): number => {
   const uploadSpeed = calculateUploadSpeed(progressEvent);
   const remaining = progressEvent.total! - progressEvent.loaded;
   return remaining / uploadSpeed;
+};
+
+// ==========================================
+// VIDEO AI EDITOR API METHODS
+// ==========================================
+
+/**
+ * Send a natural language message to the video AI editor
+ */
+export const sendVideoAIChat = async (
+  jobId: string,
+  message: string
+): Promise<any> => {
+  const response = await api.post('/video/ai-chat', {
+    job_id: jobId,
+    message: message,
+  }, {
+    timeout: 120000, // 2 minutes for AI processing
+  });
+  return response.data;
+};
+
+/**
+ * Get a preview of AI-suggested edits without applying them
+ */
+export const previewVideoAIEdit = async (
+  jobId: string,
+  operation: string,
+  params?: Record<string, any>
+): Promise<any> => {
+  const response = await api.post('/video/ai-preview', {
+    job_id: jobId,
+    operation: operation,
+    params: params,
+  });
+  return response.data;
+};
+
+/**
+ * Apply AI-suggested edits to the timeline
+ */
+export const applyVideoAIEdit = async (
+  jobId: string,
+  operation: string,
+  params?: Record<string, any>
+): Promise<any> => {
+  const response = await api.post('/video/ai-apply', {
+    job_id: jobId,
+    operation: operation,
+    params: params,
+  });
+  return response.data;
+};
+
+// ==========================================
+// VIDEO PROXY API METHODS (Phase 2)
+// ==========================================
+
+/**
+ * Get video job status including proxy transcoding progress
+ */
+export const getVideoJobStatus = async (jobId: string): Promise<VideoJob> => {
+  const response = await api.get<VideoJob>(`/video-status/${jobId}`);
+  return response.data;
+};
+
+/**
+ * Get the proxy video URL for streaming (constructs the URL)
+ * Note: The actual streaming happens via the /video-proxy/<job_id> endpoint
+ */
+export const getVideoProxyUrl = (jobId: string): string => {
+  return `${API_BASE_URL}/video-proxy/${jobId}`;
+};
+
+/**
+ * Check if video proxy is ready for streaming
+ */
+export const checkVideoProxyReady = async (jobId: string): Promise<boolean> => {
+  try {
+    const status = await getVideoJobStatus(jobId);
+    return status.proxy_status === 'ready';
+  } catch (error) {
+    console.error('Error checking video proxy status:', error);
+    return false;
+  }
+};
+
+/**
+ * Get waveform peak data for timeline visualization
+ *
+ * @param jobId - Video job identifier
+ * @returns Waveform data with normalized peaks [0, 1]
+ * @throws 404 - Video job not found
+ * @throws 425 - Proxy not ready yet (waveform generation pending)
+ * @throws 500 - Waveform generation failed
+ */
+export const getWaveformData = async (jobId: string): Promise<WaveformData> => {
+  const response = await api.get<WaveformData>(`/waveform/${jobId}`);
+  return response.data;
 };
