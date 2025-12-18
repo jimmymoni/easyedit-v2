@@ -14,8 +14,9 @@ from enum import Enum
 class VideoJobStatus(Enum):
     """Status states for video processing jobs"""
     UPLOADING = 'uploading'          # File upload in progress
-    UPLOADED = 'uploaded'            # Upload complete, ready for transcoding
-    TRANSCODING = 'transcoding'      # Transcoding in progress
+    UPLOADED = 'uploaded'            # Upload complete, ready for processing
+    PROCESSING = 'processing'        # Direct cloud processing (Replicate-only, no transcode)
+    TRANSCODING = 'transcoding'      # Transcoding in progress (hybrid mode)
     READY = 'ready'                  # Transcoding complete, proxy available
     ANALYZING = 'analyzing'          # Analysis in progress (transcription + detection)
     ANALYZED = 'analyzed'            # Analysis complete, results available
@@ -233,6 +234,11 @@ class VideoJob:
             progress: Progress value between 0.0 and 1.0
         """
         self.transcode_progress = max(0.0, min(1.0, progress))
+        self.updated_at = datetime.now()
+
+    def start_cloud_processing(self) -> None:
+        """Mark direct cloud processing started (Replicate-only mode, no transcoding)"""
+        self.status = VideoJobStatus.PROCESSING
         self.updated_at = datetime.now()
 
     def start_analysis(self) -> None:

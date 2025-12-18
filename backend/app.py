@@ -482,7 +482,7 @@ def analyze_video(job_id):
         def analyze_video_task():
             try:
                 from services.video_audio_extractor import VideoAudioExtractor
-                from services.transcription_service import TranscriptionService
+                from services.replicate_whisper_client import ReplicateWhisperClient
                 from services.repeated_take_detector import RepeatedTakeDetector
 
                 # Step 1: Extract audio
@@ -505,10 +505,10 @@ def analyze_video(job_id):
 
                 # Step 2: Transcribe audio
                 logger.info(f"[{job_id}] Transcribing audio...")
-                transcription_service = TranscriptionService()
-                transcription_result = transcription_service.transcribe(audio_path)
+                whisper_client = ReplicateWhisperClient()
+                transcription_result = whisper_client.transcribe_audio(audio_path, enable_speaker_diarization=True)
 
-                if not transcription_result.get('success'):
+                if not transcription_result:
                     job_data['status'] = 'failed'
                     job_data['message'] = 'Transcription failed'
                     processing_jobs[job_id] = job_data
@@ -759,27 +759,56 @@ def download_cut_video(job_id):
 @require_rate_limit("10 per minute, 100 per hour")
 @error_handler
 def download_video_xml(job_id):
-    """Download DaVinci Resolve XML timeline (placeholder for now)"""
+    """Download DaVinci Resolve XML timeline"""
     try:
         from utils.error_handlers import validate_job_id
+        from services.s3_upload_manager import S3UploadManager
+        from flask import redirect
+
         job_id = validate_job_id(job_id)
 
-        job_data = processing_jobs.get(job_id)  # Removed job_manager fallback
-        if not job_data:
+        # Get VideoJob (FIXED: use video_jobs, not processing_jobs)
+        if job_id not in video_jobs:
             return jsonify({"error": "Job not found"}), 404
 
-        if job_data.get('status') != 'completed':
-            return jsonify({"error": "Job not completed"}), 400
+        video_job = video_jobs[job_id]
 
-        # TODO: Implement VideoTimelineGenerator for DRT XML generation
-        # For MVP, return a placeholder message
-        return jsonify({
-            "message": "XML generation coming soon",
-            "note": "For now, download the edited video only"
-        }), 501
+        # Check if analysis is complete
+        if video_job.status != VideoJobStatus.ANALYZED:
+            return jsonify({
+                "error": "Analysis not complete",
+                "status": video_job.status.value,
+                "message": "Please wait for processing to complete"
+            }), 400
+
+        # Get XML S3 key from metadata
+        xml_s3_key = video_job.metadata.get('xml_s3_key') if hasattr(video_job, 'metadata') and video_job.metadata else None
+
+        if not xml_s3_key:
+            xml_error = video_job.metadata.get('xml_error', 'Unknown error') if hasattr(video_job, 'metadata') and video_job.metadata else 'No XML generated'
+            return jsonify({
+                "error": "XML not available",
+                "details": xml_error
+            }), 404
+
+        # Generate presigned download URL
+        s3_manager = S3UploadManager()
+        download_url = s3_manager.s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': Config.S3_VIDEO_BUCKET,
+                'Key': xml_s3_key
+            },
+            ExpiresIn=3600  # 1 hour
+        )
+
+        logger.info(f"Generated XML download URL for job {job_id}")
+
+        # Redirect to presigned URL (browser will download)
+        return redirect(download_url)
 
     except Exception as e:
-        logger.error(f"Download video XML error: {str(e)}")
+        logger.error(f"Download video XML error: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/video/system-check', methods=['GET', 'OPTIONS'])

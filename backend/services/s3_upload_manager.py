@@ -450,3 +450,38 @@ class S3UploadManager:
                 return json.load(f)
 
         return None
+
+    def get_video_presigned_url(self, job_id: str, expiration: int = 86400) -> str:
+        """
+        Generate presigned URL for S3 video access by Replicate.
+
+        Args:
+            job_id: Video job ID
+            expiration: URL expiration in seconds (default: 24 hours)
+
+        Returns:
+            Presigned URL for video access
+
+        Raises:
+            ValueError: If upload session or S3 key not found
+        """
+        # Get S3 key from upload session
+        session = self._get_session(job_id)
+        if not session:
+            raise ValueError(f"Upload session not found for job {job_id}")
+
+        s3_key = session.get('s3_key')
+        if not s3_key:
+            raise ValueError(f"S3 key not found in upload session for job {job_id}")
+
+        url = self.s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': self.bucket,
+                'Key': s3_key
+            },
+            ExpiresIn=expiration
+        )
+
+        logger.info(f"Generated presigned URL for {s3_key} (expires in {expiration}s)")
+        return url

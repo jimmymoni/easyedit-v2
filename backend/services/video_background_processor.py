@@ -19,6 +19,13 @@ import os
 from typing import Set, Dict
 from datetime import datetime
 
+# Import dependencies at module level to avoid caching issues
+from models import VideoJob, VideoJobStatus
+from services.video_audio_extractor import VideoAudioExtractor
+from services.replicate_whisper_client import ReplicateWhisperClient
+from services.repeated_take_detector import RepeatedTakeDetector
+from config import Config
+
 logger = logging.getLogger(__name__)
 
 # Global state for thread management
@@ -169,11 +176,11 @@ def _cloud_transcode(
         logger.error(f"[Cloud Transcode] [FAILED] - {str(e)}", exc_info=True)
 
         # Cleanup Cloudinary on error
-            try:
-                uploader = CloudinaryUploader()
-                logger.info(f"[Cloud Transcode] Cloudinary cleanup after error successful")
-            except Exception as cleanup_error:
-                logger.warning(f"[Cloud Transcode] Cloudinary cleanup after error failed: {cleanup_error}")
+        try:
+            uploader = CloudinaryUploader()
+            logger.info(f"[Cloud Transcode] Cloudinary cleanup after error successful")
+        except Exception as cleanup_error:
+            logger.warning(f"[Cloud Transcode] Cloudinary cleanup after error failed: {cleanup_error}")
 
         return False
 
@@ -213,6 +220,25 @@ def _transcode_worker(job_id: str, video_jobs: dict) -> None:
             logger.error(f"[Transcode Worker] No lock found for job {job_id}")
             return
 
+        # Check processing mode - Replicate-only or Hybrid
+        logger.info(f"[DEBUG] Checking processing mode for job {job_id}")
+        from services.replicate_video_processor import ReplicateVideoProcessor
+        replicate_processor = ReplicateVideoProcessor()
+        logger.info(f"[DEBUG] MediaConvert available: {replicate_processor.mediaconvert_available}")
+
+        if not replicate_processor.mediaconvert_available:
+            logger.info(f"[Replicate-Only Mode] Skipping transcode for job {job_id}")
+
+            # Update status to PROCESSING
+            with job_lock:
+                video_job = video_jobs[job_id]
+                video_job.start_cloud_processing()
+
+            # Jump directly to analysis (skip transcoding + waveform)
+            _run_analysis(job_id, video_jobs, job_lock)
+            return
+
+        # If MediaConvert is available, continue with existing transcoding flow below...
         # Load VideoJob (thread-safe read)
         with job_lock:
             if job_id not in video_jobs:
@@ -413,13 +439,6 @@ def _run_analysis(job_id: str, video_jobs: dict, job_lock: threading.Lock) -> No
         video_jobs: Reference to the global video_jobs dictionary
         job_lock: Thread lock for this specific job
     """
-    from models import VideoJob, VideoJobStatus
-    from services.video_audio_extractor import VideoAudioExtractor
-    from services.transcription_service import TranscriptionServiceFactory
-    from services.repeated_take_detector import RepeatedTakeDetector
-    from config import Config
-    import os
-
     logger.info(f"[Analysis Worker] Starting analysis for job {job_id}")
 
     try:
@@ -431,45 +450,101 @@ def _run_analysis(job_id: str, video_jobs: dict, job_lock: threading.Lock) -> No
 
             video_job = video_jobs[job_id]
             proxy_path = video_job.proxy_path
-
-            if not proxy_path or not os.path.exists(proxy_path):
-                logger.error(f"[Analysis Worker] Proxy file not found: {proxy_path}")
-                video_job.fail_analysis("Proxy file not found")
-                return
+            original_s3_url = video_job.original_path  # S3 URL stored during upload
 
             # Mark analysis started
             video_job.start_analysis()
             logger.info(f"[Analysis Worker] Status updated to ANALYZING for job {job_id}")
 
-        # Step 1: Extract audio from proxy video
-        logger.info(f"[Analysis Worker] Step 1/3: Extracting audio from proxy: {proxy_path}")
-        extractor = VideoAudioExtractor()
+        # Step 1: Extract audio from video
+        logger.info(f"[Analysis Worker] Step 1/3: Extracting audio")
         audio_filename = f"{job_id}_analysis_audio.wav"
         audio_path = os.path.join(Config.TEMP_FOLDER, audio_filename)
 
-        audio_result = extractor.extract_audio(proxy_path, audio_path)
-        if not audio_result.get('success'):
-            error_msg = f"Audio extraction failed: {audio_result.get('message', 'Unknown error')}"
-            logger.error(f"[Analysis Worker] {error_msg}")
-            with job_lock:
-                video_jobs[job_id].fail_analysis(error_msg)
-            return
+        # Check if we have a transcoded proxy (hybrid mode) or use S3 original (Replicate-only)
+        if proxy_path and os.path.exists(proxy_path):
+            # Hybrid mode: Extract from local proxy
+            logger.info(f"[Analysis Worker] Extracting audio from proxy: {proxy_path}")
+            extractor = VideoAudioExtractor()
+            audio_result = extractor.extract_audio(proxy_path, audio_path)
+
+            if not audio_result.get('success'):
+                error_msg = f"Audio extraction failed: {audio_result.get('message', 'Unknown error')}"
+                logger.error(f"[Analysis Worker] {error_msg}")
+                with job_lock:
+                    video_jobs[job_id].fail_analysis(error_msg)
+                return
+        else:
+            # Replicate-only mode: Extract from S3 original via Replicate
+            logger.info(f"[Analysis Worker] Extracting audio from S3 via Replicate")
+
+            try:
+                # Generate presigned URL for S3 video access (inline to avoid caching issues)
+                import boto3
+                s3_client = boto3.client(
+                    's3',
+                    aws_access_key_id=Config.AWS_ACCESS_KEY_ID,
+                    aws_secret_access_key=Config.AWS_SECRET_ACCESS_KEY,
+                    region_name=Config.AWS_REGION,
+                    endpoint_url=f'https://s3.{Config.AWS_REGION}.amazonaws.com'
+                )
+                s3_key = f"uploads/{job_id}/{video_job.filename}"
+                video_presigned_url = s3_client.generate_presigned_url(
+                    'get_object',
+                    Params={'Bucket': Config.S3_VIDEO_BUCKET, 'Key': s3_key},
+                    ExpiresIn=86400
+                )
+                logger.info(f"[Analysis Worker] Generated presigned URL for {s3_key}")
+
+                # Extract audio via Replicate
+                from services.replicate_video_processor import ReplicateVideoProcessor
+                replicate_processor = ReplicateVideoProcessor()
+                audio_extraction = replicate_processor.extract_audio(
+                    video_url=video_presigned_url,
+                    output_format="wav",
+                    audio_quality="high"
+                )
+
+                audio_url = audio_extraction['audio_url']
+                logger.info(f"[Analysis Worker] Replicate audio extraction complete: {audio_url}")
+
+                # Download audio to local temp file
+                import requests
+                response = requests.get(audio_url, stream=True, timeout=300)
+                response.raise_for_status()
+
+                with open(audio_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+
+                logger.info(f"[Analysis Worker] Audio downloaded: {audio_path}")
+
+            except Exception as e:
+                error_msg = f"Replicate audio extraction failed: {str(e)}"
+                logger.error(f"[Analysis Worker] {error_msg}", exc_info=True)
+                with job_lock:
+                    video_jobs[job_id].fail_analysis(error_msg)
+                return
 
         logger.info(f"[Analysis Worker] Audio extracted: {audio_path}")
 
         # Step 2: Transcribe with Replicate Whisper
         logger.info(f"[Analysis Worker] Step 2/3: Transcribing audio with Replicate Whisper")
-        transcription_service = TranscriptionServiceFactory.create()
-        transcription_result = transcription_service.transcribe(audio_path)
 
-        if not transcription_result.get('success'):
-            error_msg = f"Transcription failed: {transcription_result.get('message', 'Unknown error')}"
-            logger.error(f"[Analysis Worker] {error_msg}")
+        try:
+            whisper_client = ReplicateWhisperClient()
+            transcription_result = whisper_client.transcribe_audio(
+                audio_path,
+                enable_speaker_diarization=True
+            )
+            logger.info(f"[Analysis Worker] Transcription complete: {transcription_result.get('word_count', 0)} words")
+        except Exception as e:
+            error_msg = f"Transcription failed: {str(e)}"
+            logger.error(f"[Analysis Worker] {error_msg}", exc_info=True)
             with job_lock:
                 video_jobs[job_id].fail_analysis(error_msg)
             return
-
-        logger.info(f"[Analysis Worker] Transcription complete")
 
         # Step 3: Detect repeated takes
         logger.info(f"[Analysis Worker] Step 3/3: Running repeated take detection")
@@ -498,6 +573,55 @@ def _run_analysis(job_id: str, video_jobs: dict, job_lock: threading.Lock) -> No
 
             video_jobs[job_id].complete_analysis(transcription_result, analysis_result)
             logger.info(f"[Analysis Worker] [SUCCESS] - Analysis complete for job {job_id}")
+
+        # Step 4: Generate DaVinci Resolve XML
+        logger.info(f"[XML Generator] Generating timeline XML for job {job_id}")
+
+        try:
+            # Create timeline from transcription
+            timeline = _create_timeline_from_transcription(
+                transcription_result=transcription_result,
+                video_job=video_job
+            )
+
+            # Generate XML
+            from parsers.xml_writer import FCP7XMLWriter
+            xml_writer = FCP7XMLWriter()
+            xml_content = xml_writer.generate_fcp7_xml(timeline)
+
+            # Upload XML to S3
+            from services.s3_upload_manager import S3UploadManager
+            s3_manager = S3UploadManager()
+            xml_s3_key = f"xml/{job_id}/timeline.xml"
+
+            s3_manager.s3_client.put_object(
+                Bucket=Config.S3_VIDEO_BUCKET,
+                Key=xml_s3_key,
+                Body=xml_content.encode('utf-8'),
+                ContentType='application/xml',
+                Metadata={
+                    'job_id': job_id,
+                    'generated_at': datetime.now().isoformat()
+                }
+            )
+
+            # Store XML S3 key in VideoJob metadata
+            with job_lock:
+                if not hasattr(video_jobs[job_id], 'metadata') or video_jobs[job_id].metadata is None:
+                    video_jobs[job_id].metadata = {}
+                video_jobs[job_id].metadata['xml_s3_key'] = xml_s3_key
+                video_jobs[job_id].metadata['xml_url'] = f"s3://{Config.S3_VIDEO_BUCKET}/{xml_s3_key}"
+
+            logger.info(f"[XML Generator] XML stored: {xml_s3_key}")
+
+        except Exception as e:
+            # Don't fail the entire job if XML generation fails
+            logger.error(f"[XML Generator] XML generation failed: {e}", exc_info=True)
+            with job_lock:
+                if not hasattr(video_jobs[job_id], 'metadata') or video_jobs[job_id].metadata is None:
+                    video_jobs[job_id].metadata = {}
+                video_jobs[job_id].metadata['xml_error'] = str(e)
+            logger.warning(f"[XML Generator] Continuing without XML (analysis still complete)")
 
         # Cleanup audio file
         try:
@@ -580,3 +704,67 @@ def get_transcode_stats() -> dict:
         'active_jobs': active_list,
         'job_locks_count': locks_count
     }
+
+
+def _create_timeline_from_transcription(
+    transcription_result: Dict,
+    video_job: 'VideoJob'
+) -> 'Timeline':
+    """
+    Create a Timeline object from Whisper transcription segments.
+
+    For MVP: Single video track with one clip per transcription segment.
+    Future enhancement: Multi-layer with talking head/demo/abstract segments.
+
+    Args:
+        transcription_result: Output from Whisper client
+        video_job: VideoJob with metadata
+
+    Returns:
+        Timeline object ready for XML generation
+    """
+    from models.timeline import Timeline, Track, Clip
+
+    timeline = Timeline(
+        name=f"Timeline_{video_job.job_id}",
+        frame_rate=video_job.fps or 30.0,
+        sample_rate=48000
+    )
+
+    # Create video track
+    video_track = Track(
+        index=1,
+        name="Video 1",
+        track_type='video'
+    )
+
+    # Add one clip per transcription segment
+    segments = transcription_result.get('segments', [])
+    for i, segment in enumerate(segments):
+        clip = Clip(
+            name=f"Segment_{i+1}_{segment.get('speaker', 'SPEAKER_00')}",
+            start_time=segment['start'],
+            end_time=segment['end'],
+            duration=segment['end'] - segment['start'],
+            track_index=1,
+            media_start=segment['start'],
+            media_end=segment['end'],
+            metadata={
+                'text': segment.get('text', ''),
+                'speaker': segment.get('speaker', 'SPEAKER_00'),
+                'confidence': segment.get('confidence', 0.0)
+            }
+        )
+        video_track.add_clip(clip)
+
+    timeline.add_track(video_track)
+    timeline.calculate_duration()
+
+    # Set canonical file block (reference to S3 original)
+    timeline.set_canonical_file_block({
+        'file_id': 'file-1',
+        'name': video_job.original_filename or 'video.mp4',
+        'pathurl': video_job.original_path  # S3 URL
+    })
+
+    return timeline
