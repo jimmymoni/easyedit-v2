@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+  <project>
+    <name>Timeline 1 (Resolve)</name>
+    <children>
+      <sequence id="sequence-1">
+        <name>Timeline 1 (Resolve)</name>
+        <duration>5989</duration>
+        <rate>
+          <timebase>30</timebase>
+          <ntsc>FALSE</ntsc>
+        </rate>
+        <format>
+          <samplecharacteristics>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <audio>
+              <samplerate>48000</samplerate>
+              <depth>16</depth>
+            </audio>
+          </samplecharacteristics>
+        </format>
+        <media>
+          <video>
+            <format>
+              <samplecharacteristics>
+                <rate>
+                  <timebase>30</timebase>
+                </rate>
+                <width>1920</width>
+                <height>1080</height>
+              </samplecharacteristics>
+            </format>
+            <track>
+              <clipitem id="clipitem-Function creator.mp4">
+                <name>Function creator.mp4</name>
+                <enabled>TRUE</enabled>
+                <duration>5989</duration>
+                <rate>
+                  <timebase>30</timebase>
+                  <ntsc>FALSE</ntsc>
+                </rate>
+                <start>0</start>
+                <end>5989</end>
+                <in>0</in>
+                <out>5989</out>
+                <file id="file-Function creator.mp4">
+                  <name>Function creator.mp4</name>
+                  <pathurl>file://localhost/Function creator.mp4</pathurl>
+                  <rate>
+                    <timebase>30</timebase>
+                    <ntsc>FALSE</ntsc>
+                  </rate>
+                  <duration>5989</duration>
+                </file>
+              </clipitem>
+            </track>
+          </video>
+          <audio>
+            <format>
+              <samplecharacteristics>
+                <depth>16</depth>
+                <samplerate>48000</samplerate>
+              </samplecharacteristics>
+            </format>
+            <track>
+              <clipitem id="clipitem-Function creator.mp4">
+                <name>Function creator.mp4</name>
+                <enabled>TRUE</enabled>
+                <duration>5989</duration>
+                <rate>
+                  <timebase>30</timebase>
+                  <ntsc>FALSE</ntsc>
+                </rate>
+                <start>0</start>
+                <end>5989</end>
+                <in>0</in>
+                <out>5989</out>
+                <file id="file-Function creator.mp4">
+                  <name>Function creator.mp4</name>
+                  <pathurl>file://localhost/Function creator.mp4</pathurl>
+                  <rate>
+                    <timebase>30</timebase>
+                    <ntsc>FALSE</ntsc>
+                  </rate>
+                  <duration>5989</duration>
+                </file>
+              </clipitem>
+            </track>
+          </audio>
+        </media>
+        <timecode>
+          <rate>
+            <timebase>30</timebase>
+            <ntsc>FALSE</ntsc>
+          </rate>
+          <string>01:00:00:00</string>
+          <frame>108000</frame>
+        </timecode>
+      </sequence>
+    </children>
+  </project>
+</xmeml>

@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+  <sequence id="sequence-1">
+    <name>Function Creator — 90s Reel (GodMode)</name>
+    <duration>2670</duration>
+    <rate>
+      <timebase>30</timebase>
+      <ntsc>FALSE</ntsc>
+    </rate>
+    <format>
+      <samplecharacteristics>
+        <rate>
+          <timebase>30</timebase>
+          <ntsc>FALSE</ntsc>
+        </rate>
+        <audio>
+          <samplerate>48000</samplerate>
+          <depth>16</depth>
+        </audio>
+      </samplecharacteristics>
+    </format>
+    <media>
+      <video>
+        <track>
+          <clipitem id="clipitem-1">
+            <name>Function creator.mp4</name>
+            <duration>540</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>0</start>
+            <end>540</end>
+            <enabled>TRUE</enabled>
+            <in>0</in>
+            <out>540</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="clipitem-2">
+            <name>Function creator.mp4</name>
+            <duration>360</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>540</start>
+            <end>900</end>
+            <enabled>TRUE</enabled>
+            <in>750</in>
+            <out>1110</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="clipitem-3">
+            <name>Function creator.mp4</name>
+            <duration>480</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>900</start>
+            <end>1380</end>
+            <enabled>TRUE</enabled>
+            <in>1680</in>
+            <out>2160</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="clipitem-4">
+            <name>Function creator.mp4</name>
+            <duration>360</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>1380</start>
+            <end>1740</end>
+            <enabled>TRUE</enabled>
+            <in>2460</in>
+            <out>2820</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="clipitem-5">
+            <name>Function creator.mp4</name>
+            <duration>510</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>1740</start>
+            <end>2250</end>
+            <enabled>TRUE</enabled>
+            <in>2940</in>
+            <out>3450</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="clipitem-6">
+            <name>Function creator.mp4</name>
+            <duration>420</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>2250</start>
+            <end>2670</end>
+            <enabled>TRUE</enabled>
+            <in>4950</in>
+            <out>5370</out>
+            <file id="file-1"/>
+          </clipitem>
+        </track>
+        <format>
+          <samplecharacteristics>
+            <rate>
+              <timebase>30</timebase>
+            </rate>
+            <width>1920</width>
+            <height>1080</height>
+          </samplecharacteristics>
+        </format>
+      </video>
+      <audio>
+        <track>
+          <clipitem id="audioclip-7">
+            <name>Function creator.mp4</name>
+            <duration>540</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>0</start>
+            <end>540</end>
+            <enabled>TRUE</enabled>
+            <in>0</in>
+            <out>540</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="audioclip-8">
+            <name>Function creator.mp4</name>
+            <duration>360</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>540</start>
+            <end>900</end>
+            <enabled>TRUE</enabled>
+            <in>750</in>
+            <out>1110</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="audioclip-9">
+            <name>Function creator.mp4</name>
+            <duration>480</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>900</start>
+            <end>1380</end>
+            <enabled>TRUE</enabled>
+            <in>1680</in>
+            <out>2160</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="audioclip-10">
+            <name>Function creator.mp4</name>
+            <duration>360</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>1380</start>
+            <end>1740</end>
+            <enabled>TRUE</enabled>
+            <in>2460</in>
+            <out>2820</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="audioclip-11">
+            <name>Function creator.mp4</name>
+            <duration>510</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>1740</start>
+            <end>2250</end>
+            <enabled>TRUE</enabled>
+            <in>2940</in>
+            <out>3450</out>
+            <file id="file-1"/>
+          </clipitem>
+          <clipitem id="audioclip-12">
+            <name>Function creator.mp4</name>
+            <duration>420</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>2250</start>
+            <end>2670</end>
+            <enabled>TRUE</enabled>
+            <in>4950</in>
+            <out>5370</out>
+            <file id="file-1"/>
+          </clipitem>
+        </track>
+        <format>
+          <samplecharacteristics>
+            <depth>16</depth>
+            <samplerate>48000</samplerate>
+          </samplecharacteristics>
+        </format>
+      </audio>
+      <file id="file-1">
+        <duration>None</duration>
+        <rate>
+          <timebase>30</timebase>
+          <ntsc>FALSE</ntsc>
+        </rate>
+        <name/>
+        <pathurl/>
+        <timecode>
+          <rate>
+            <timebase>30</timebase>
+            <ntsc>FALSE</ntsc>
+          </rate>
+        </timecode>
+        <media>
+          <video>
+            <duration>None</duration>
+            <samplecharacteristics/>
+          </video>
+          <audio/>
+        </media>
+      </file>
+    </media>
+    <timecode>
+      <rate>
+        <timebase>30</timebase>
+        <ntsc>FALSE</ntsc>
+      </rate>
+      <string>01:00:00:00</string>
+      <frame>108000</frame>
+    </timecode>
+  </sequence>
+</xmeml>

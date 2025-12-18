@@ -9,17 +9,7 @@ from datetime import datetime, timedelta
 
 # Import our services
 from config import Config
-from parsers.xml_parser import FCP7XMLParser
 from parsers.xml_writer import FCP7XMLWriter
-from services.transcription_service import TranscriptionServiceFactory
-try:
-    from services.audio_analyzer import AudioAnalyzer
-except ImportError:
-    # Fallback to simple audio analyzer if librosa dependencies not available
-    from services.simple_audio_analyzer import SimpleAudioAnalyzer as AudioAnalyzer
-from services.edit_rules import EditRulesEngine
-from services.ai_enhancer import AIEnhancementService
-from services.content_analyzer import ContentAnalyzer
 
 # Import production utilities
 from utils import (
@@ -30,8 +20,7 @@ from utils import (
     openai_circuit_breaker, RequestLogger
 )
 
-# Import async job manager and WebSocket support
-from job_manager import job_manager
+# Import WebSocket support for real-time updates
 from websocket_manager import websocket_manager
 
 # Import authentication and rate limiting
@@ -63,6 +52,9 @@ rate_limiter.init_app(app)
 
 # Store for tracking processing jobs
 processing_jobs = {}
+
+# Store for tracking video transcoding jobs (Phase 1)
+video_jobs = {}
 
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
@@ -132,6 +124,19 @@ def periodic_cleanup():
     """Run periodic cleanup of files and jobs"""
     cleanup_old_files()
     cleanup_old_jobs()
+
+    # Cleanup stale S3 uploads (added for chunked upload support)
+    try:
+        from services.s3_upload_manager import S3UploadManager
+
+        s3_manager = S3UploadManager(redis_client=None)
+        cleaned = s3_manager.cleanup_stale_uploads(
+            max_age_hours=Config.S3_CLEANUP_STALE_UPLOADS_HOURS
+        )
+        if cleaned > 0:
+            logger.info(f"Cleaned up {cleaned} stale S3 uploads")
+    except Exception as e:
+        logger.error(f"S3 cleanup failed: {str(e)}")
 
 def startup():
     """Initialize app on startup"""
@@ -233,1482 +238,6 @@ def get_metrics():
 # ==============================================================================
 # SIMPLE UPLOAD ENDPOINT - NO MIDDLEWARE (DEBUGGING)
 # ==============================================================================
-@app.route('/simple-upload', methods=['POST', 'OPTIONS'])
-@cross_origin(
-    origins="*",
-    methods=["POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
-    supports_credentials=True
-)
-def simple_upload():
-    """
-    BARE MINIMUM UPLOAD - FOR SPEED TESTING
-    NO authentication, NO rate limiting, NO validation, NO error handling
-    This endpoint exists to test if middleware is causing slowness
-    """
-    if request.method == 'OPTIONS':
-        return '', 200
-
-    try:
-        # Get files directly
-        audio = request.files.get('audio')
-        timeline = request.files.get('timeline')
-
-        if not audio or not timeline:
-            return jsonify({"error": "Missing files", "debug": {
-                "files_keys": list(request.files.keys()),
-                "content_type": request.content_type
-            }}), 400
-
-        # Generate simple ID
-        job_id = str(uuid.uuid4())
-
-        # Ensure uploads directory exists
-        os.makedirs('uploads', exist_ok=True)
-
-        # Save files immediately - NO validation, NO sanitization
-        audio_path = os.path.join('uploads', f"{job_id}_audio.wav")
-        timeline_path = os.path.join('uploads', f"{job_id}_timeline.xml")
-
-        audio.save(audio_path)
-        timeline.save(timeline_path)
-
-        # Register job in processing_jobs dictionary (required by /process/ endpoint)
-        processing_jobs[job_id] = {
-            'job_id': job_id,
-            'audio_file': audio_path,
-            'timeline_file': timeline_path,
-            'status': 'uploaded',
-            'created_at': datetime.now().isoformat()
-        }
-
-        # Also register in job manager for tracking
-        job_manager.update_job_status(
-            job_id=job_id,
-            status='uploaded',
-            progress=0,
-            message='Files uploaded successfully - ready for processing'
-        )
-
-        # Store file paths in job data for later retrieval
-        job_data = job_manager._get_job_data(job_id)
-        job_data['audio_file'] = audio_path
-        job_data['timeline_file'] = timeline_path
-        job_data['type'] = 'simple_upload'
-        job_manager._store_job_data(job_id, job_data)
-
-        response_data = {
-            "job_id": job_id,
-            "message": "Files uploaded successfully",
-            "audio_filename": audio.filename,
-            "timeline_filename": timeline.filename
-        }
-
-        return jsonify(response_data), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# ==============================================================================
-# REGULAR UPLOAD ENDPOINT (WITH MIDDLEWARE)
-# ==============================================================================
-@app.route('/upload', methods=['POST'])
-@require_auth()
-@require_rate_limit("5 per minute, 50 per hour")
-@error_handler
-def upload_files():
-    """Upload audio and FCP7 XML timeline files for processing"""
-    start_time = time.time()
-
-    try:
-        # DEBUG: Log what we're receiving
-        logger.info(f"Upload request - Files keys: {list(request.files.keys())}")
-        logger.info(f"Upload request - Form keys: {list(request.form.keys())}")
-        logger.info(f"Upload request - Content-Type: {request.content_type}")
-        logger.info(f"Upload request - All files: {dict(request.files)}")
-
-        # Check for required files
-        audio_file = request.files.get('audio')
-        timeline_file = request.files.get('timeline')
-
-        logger.info(f"Audio file object: {audio_file}")
-        logger.info(f"Timeline file object: {timeline_file}")
-
-        if audio_file:
-            logger.info(f"Audio file - filename: {audio_file.filename}, content_type: {audio_file.content_type}")
-        if timeline_file:
-            logger.info(f"Timeline file - filename: {timeline_file.filename}, content_type: {timeline_file.content_type}")
-
-        # Validate files using production validation
-        validate_file_upload(audio_file, Config.ALLOWED_AUDIO_EXTENSIONS, Config.MAX_FILE_SIZE_MB)
-        validate_file_upload(timeline_file, Config.ALLOWED_TIMELINE_EXTENSIONS, Config.MAX_FILE_SIZE_MB)
-
-        # Explicit rejection of .drt files
-        if timeline_file and timeline_file.filename.lower().endswith('.drt'):
-            return jsonify({
-                'error': 'Invalid file format',
-                'message': '.drt files are not supported. Please export your timeline as Final Cut Pro 7 XML (.xml) format.'
-            }), 400
-
-        # Generate job ID
-        job_id = generate_job_id()
-
-        # Save uploaded files with additional sanitization
-        audio_clean_name = sanitize_filename(audio_file.filename)
-        timeline_clean_name = sanitize_filename(timeline_file.filename)
-
-        audio_filename = secure_filename(f"{job_id}_audio_{audio_clean_name}")
-        timeline_filename = secure_filename(f"{job_id}_timeline_{timeline_clean_name}")
-
-        audio_path = os.path.join(Config.UPLOAD_FOLDER, audio_filename)
-        timeline_path = os.path.join(Config.UPLOAD_FOLDER, timeline_filename)
-
-        audio_file.save(audio_path)
-        timeline_file.save(timeline_path)
-
-        # Initialize job tracking
-        processing_jobs[job_id] = {
-            "status": "uploaded",
-            "created_at": datetime.now(),
-            "audio_file": audio_path,
-            "timeline_file": timeline_path,
-            "progress": 10,
-            "message": "Files uploaded successfully"
-        }
-
-        logger.info(f"Files uploaded for job {job_id}")
-
-        # Log performance
-        duration = time.time() - start_time
-        log_performance("file_upload", duration, {
-            "job_id": job_id,
-            "audio_size": audio_file.content_length or 0,
-            "timeline_size": timeline_file.content_length or 0
-        })
-
-        return jsonify({
-            "job_id": job_id,
-            "message": "Files uploaded successfully",
-            "audio_filename": audio_file.filename,
-            "timeline_filename": timeline_file.filename
-        })
-
-    except Exception as e:
-        logger.error(f"Error in file upload: {str(e)}")
-        raise  # Let error_handler decorator handle the response
-
-@app.route('/process/<job_id>', methods=['POST'])
-@require_auth()
-@require_rate_limit("2 per minute, 20 per hour")
-@error_handler
-def process_timeline(job_id):
-    """Submit timeline processing to background queue"""
-    start_time = time.time()
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        if job_id not in processing_jobs:
-            return jsonify({"error": "Job not found"}), 404
-
-        job = processing_jobs[job_id]
-
-        # Allow multiple valid statuses for processing
-        allowed_statuses = ["uploaded", "ready", "queued"]
-        if job["status"] not in allowed_statuses:
-            return jsonify({"error": f"Job status is {job['status']}, expected one of {allowed_statuses}"}), 400
-
-        # Get and validate processing options from request
-        options = validate_json_request(request)
-        validate_processing_options(options)
-
-        # Submit job to background processing queue
-        task_id = job_manager.submit_timeline_processing(
-            job_id=job_id,
-            audio_file_path=job["audio_file"],
-            timeline_file_path=job["timeline_file"],
-            options=options
-        )
-
-        # Check if task completed immediately (Celery eager mode)
-        from celery_app import celery_app
-
-        # In eager mode, task executes synchronously and result is available immediately
-        if celery_app.conf.task_always_eager:
-            # Get result from eager execution
-            task = celery_app.AsyncResult(task_id)
-            try:
-                # In eager mode, result is stored in memory
-                task_result = task.result if hasattr(task, 'result') else None
-
-                if task_result:
-                    logger.info(f"Task {task_id} completed in eager mode, storing result")
-                    job_manager.store_task_result(job_id, task_result)
-
-                    # Update job status to indicate completion
-                    job.update({
-                        "status": "completed",
-                        "task_id": task_id,
-                        "progress": 100,
-                        "message": "Timeline processed successfully",
-                        "submitted_at": datetime.now(),
-                        "completed_at": datetime.now(),
-                        "processing_options": options,
-                        "result": task_result
-                    })
-
-                    return jsonify({
-                        "job_id": job_id,
-                        "task_id": task_id,
-                        "status": "completed",
-                        "message": "Timeline processed successfully",
-                        "result": task_result
-                    })
-            except Exception as e:
-                logger.warning(f"Could not get eager task result: {str(e)}")
-
-        # Normal async mode (or fallback if eager mode fails) - update job status to indicate submission
-        job.update({
-            "status": "queued",
-            "task_id": task_id,
-            "progress": 5,
-            "message": "Job submitted for processing",
-            "submitted_at": datetime.now(),
-            "processing_options": options
-        })
-
-        logger.info(f"Timeline processing job {job_id} submitted with task ID {task_id}")
-
-        return jsonify({
-            "job_id": job_id,
-            "task_id": task_id,
-            "status": "queued",
-            "message": "Timeline processing submitted to background queue",
-            "estimated_time": "5-10 minutes"
-        })
-
-    except Exception as e:
-        logger.error(f"Error submitting timeline processing for job {job_id}: {str(e)}")
-
-        # Update job status on error
-        if job_id in processing_jobs:
-            processing_jobs[job_id].update({
-                "status": "failed",
-                "message": f"Failed to submit for processing: {str(e)}"
-            })
-
-        raise  # Let error_handler decorator handle the response
-
-@app.route('/process-shortform/<job_id>', methods=['POST'])
-@require_auth()
-@require_rate_limit("2 per minute, 20 per hour")
-@error_handler
-def process_shortform(job_id):
-    """Submit short-form content generation to background queue"""
-    start_time = time.time()
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        if job_id not in processing_jobs:
-            return jsonify({"error": "Job not found"}), 404
-
-        job = processing_jobs[job_id]
-
-        # Allow multiple valid statuses for processing
-        allowed_statuses = ["uploaded", "ready", "queued"]
-        if job["status"] not in allowed_statuses:
-            return jsonify({"error": f"Job status is {job['status']}, expected one of {allowed_statuses}"}), 400
-
-        # Get and validate options from request
-        options = validate_json_request(request)
-
-        # Extract short-form specific options
-        prompt_type = options.get('prompt_type', 'engaging')
-        target_duration = float(options.get('target_duration', 60.0))
-        language_code = options.get('language_code', 'ml-IN')
-
-        # Validate prompt type
-        valid_prompt_types = ['engaging', 'informative', 'emotional', 'funny', 'tutorial',
-                               'inspirational', 'controversial', 'storytelling']
-        if prompt_type not in valid_prompt_types:
-            return jsonify({
-                "error": f"Invalid prompt_type. Must be one of: {', '.join(valid_prompt_types)}"
-            }), 400
-
-        # Validate target duration (15-180 seconds)
-        if not (15 <= target_duration <= 180):
-            return jsonify({
-                "error": "target_duration must be between 15 and 180 seconds"
-            }), 400
-
-        # Submit short-form processing task
-        from tasks.shortform_processing import process_shortform_content
-
-        task = process_shortform_content.apply_async(
-            args=[job_id, job["audio_file"], job["timeline_file"], prompt_type, target_duration, language_code],
-            task_id=f"shortform_{job_id}"
-        )
-
-        task_id = task.id
-
-        # Check if task completed immediately (Celery eager mode)
-        from celery_app import celery_app
-
-        if celery_app.conf.task_always_eager:
-            try:
-                task_result = task.result if hasattr(task, 'result') else None
-
-                if task_result:
-                    logger.info(f"Short-form task {task_id} completed in eager mode")
-                    job_manager.store_task_result(job_id, task_result)
-
-                    job.update({
-                        "status": "completed",
-                        "task_id": task_id,
-                        "progress": 100,
-                        "message": "Short-form content generated successfully",
-                        "submitted_at": datetime.now(),
-                        "completed_at": datetime.now(),
-                        "processing_options": options,
-                        "result": task_result
-                    })
-
-                    return jsonify({
-                        "job_id": job_id,
-                        "task_id": task_id,
-                        "status": "completed",
-                        "message": "Short-form content generated successfully",
-                        "result": task_result
-                    })
-            except Exception as e:
-                logger.warning(f"Could not get eager task result: {str(e)}")
-
-        # Normal async mode
-        job.update({
-            "status": "queued",
-            "task_id": task_id,
-            "progress": 5,
-            "message": "Short-form generation submitted",
-            "submitted_at": datetime.now(),
-            "processing_options": options
-        })
-
-        logger.info(f"Short-form processing job {job_id} submitted with task ID {task_id}")
-
-        return jsonify({
-            "job_id": job_id,
-            "task_id": task_id,
-            "status": "queued",
-            "message": "Short-form content generation submitted to background queue",
-            "estimated_time": "10-20 minutes",
-            "options": {
-                "prompt_type": prompt_type,
-                "target_duration": target_duration,
-                "language_code": language_code
-            }
-        })
-
-    except Exception as e:
-        logger.error(f"Error submitting short-form processing for job {job_id}: {str(e)}")
-
-        # Update job status on error
-        if job_id in processing_jobs:
-            processing_jobs[job_id].update({
-                "status": "failed",
-                "message": f"Failed to submit for processing: {str(e)}"
-            })
-
-        raise  # Let error_handler decorator handle the response
-
-@app.route('/status/<job_id>', methods=['GET'])
-@require_auth()
-def get_job_status(job_id):
-    """Get processing job status from job manager and in-memory fallback"""
-    # Validate job ID
-    job_id = validate_job_id(job_id)
-
-    try:
-        # Try to get status from job manager (Redis/Celery)
-        job_status = job_manager.get_job_status(job_id)
-        if job_status:
-            # Extract result data
-            result = job_status.get("result", {})
-
-            response = {
-                "job_id": job_id,
-                "status": job_status.get("status", "unknown"),
-                "progress": job_status.get("progress", 0),
-                "message": job_status.get("message", "Processing"),
-                "created_at": job_status.get("created_at"),
-                "updated_at": job_status.get("updated_at"),
-                "task_id": job_status.get("task_id"),
-                "type": job_status.get("type", "timeline_processing"),
-            }
-
-            # Add result fields if available
-            if result:
-                response.update({
-                    # NO stats field - no automatic editing in GodMode-only architecture
-                    "stats": result.get("stats"),  # Optional - only for old jobs (backward compatibility)
-                    "transcription_available": result.get("transcription_available", False),
-                    "audio_analysis": result.get("audio_analysis", {}),
-                    "content_analysis_available": bool(result.get("content_analysis")),
-                    "filler_word_detection": result.get("filler_word_detection"),
-                    "ai_enhancements": result.get("ai_enhancements"),
-                })
-
-            # Add error info if failed
-            if job_status.get("error"):
-                response.update({
-                    "error": job_status.get("error"),
-                    "error_type": job_status.get("error_type")
-                })
-
-            return jsonify(response)
-
-    except Exception as e:
-        logger.warning(f"Failed to get job status from job manager: {str(e)}")
-
-    # Fallback to in-memory storage
-    if job_id not in processing_jobs:
-        return jsonify({"error": "Job not found"}), 404
-
-    job = processing_jobs[job_id]
-
-    return jsonify({
-        "job_id": job_id,
-        "status": job["status"],
-        "progress": job.get("progress", 0),
-        "message": job.get("message", "Processing"),
-        "created_at": job["created_at"].isoformat(),
-        "task_id": job.get("task_id"),
-        "stats": job.get("stats"),  # Optional - only for old jobs
-        "transcription_available": job.get("transcription_available", False),
-        "content_analysis_available": bool(job.get("result", {}).get("content_analysis"))
-    })
-
-@app.route('/download/<job_id>', methods=['GET'])
-@require_auth()
-@require_rate_limit("10 per minute, 100 per hour")
-@error_handler
-def download_result(job_id):
-    """Download processed FCP7 XML file"""
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Get job from job_manager instead of old processing_jobs dict
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                return jsonify({"error": "Job not found"}), 404
-        except Exception as e:
-            logger.error(f"Failed to get job status from job manager: {str(e)}")
-            # Fallback to old processing_jobs dict
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        if job_status.get("status") != "completed":
-            return jsonify({"error": f"Job status is {job_status.get('status')}, no file available"}), 400
-
-        # Get output file from result
-        result = job_status.get("result", {})
-
-        # Check for AI-edited file first, then fallback to regular output_file
-        output_file = result.get("ai_edited_output_file") or result.get("output_file")
-
-        # New architecture: no initial XML exists in GodMode-only workflow
-        if not output_file:
-            return jsonify({
-                "error": "No pre-generated timeline available in GodMode-only architecture.",
-                "message": "Use God Mode to create custom edits and download from there.",
-                "godmode_url": f"/godmode/{job_id}"
-            }), 404
-
-        # Check if file exists
-        if not os.path.exists(output_file):
-            return jsonify({"error": f"Output file not found: {output_file}"}), 404
-
-        return send_file(
-            output_file,
-            as_attachment=True,
-            download_name=f"edited_timeline_{job_id}.xml",
-            mimetype='application/xml'
-        )
-
-    except Exception as e:
-        logger.error(f"Error downloading file for job {job_id}: {str(e)}")
-        return jsonify({"error": "Download failed"}), 500
-
-@app.route('/audio/<job_id>', methods=['GET'])
-@require_auth()
-@require_rate_limit("20 per minute, 200 per hour")
-@error_handler
-def get_audio_file(job_id):
-    """Get uploaded audio file for God Mode waveform viewer"""
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Get job from job_manager or fallback to processing_jobs
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        # Get audio file path
-        audio_file = job_status.get("audio_file")
-
-        if not audio_file or not os.path.exists(audio_file):
-            return jsonify({"error": "Audio file not found"}), 404
-
-        # Determine mimetype based on extension
-        _, ext = os.path.splitext(audio_file)
-        mime_types = {
-            '.wav': 'audio/wav',
-            '.mp3': 'audio/mpeg',
-            '.m4a': 'audio/mp4',
-            '.aac': 'audio/aac',
-            '.flac': 'audio/flac'
-        }
-        mimetype = mime_types.get(ext.lower(), 'application/octet-stream')
-
-        return send_file(
-            audio_file,
-            mimetype=mimetype,
-            as_attachment=False  # Allow inline playback
-        )
-
-    except Exception as e:
-        logger.error(f"Error serving audio file for job {job_id}: {str(e)}")
-        return jsonify({"error": "Failed to serve audio file"}), 500
-
-@app.route('/audio/<job_id>/edited', methods=['GET'])
-@require_auth()
-@require_rate_limit("20 per minute, 200 per hour")
-@error_handler
-def get_edited_audio_file(job_id):
-    """Get AI-edited audio file for God Mode waveform viewer"""
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Get job from job_manager or fallback to processing_jobs
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        # Get edited audio file path from result
-        result = job_status.get("result", {})
-        edited_audio_file = result.get("edited_audio_file")
-
-        if not edited_audio_file or not os.path.exists(edited_audio_file):
-            return jsonify({"error": "Edited audio file not found. Please run an AI edit first."}), 404
-
-        # Determine mimetype based on extension
-        _, ext = os.path.splitext(edited_audio_file)
-        mime_types = {
-            '.wav': 'audio/wav',
-            '.mp3': 'audio/mpeg',
-            '.m4a': 'audio/mp4',
-            '.aac': 'audio/aac',
-            '.flac': 'audio/flac'
-        }
-        mimetype = mime_types.get(ext.lower(), 'application/octet-stream')
-
-        return send_file(
-            edited_audio_file,
-            mimetype=mimetype,
-            as_attachment=False  # Allow inline playback
-        )
-
-    except Exception as e:
-        logger.error(f"Error serving edited audio file for job {job_id}: {str(e)}")
-        return jsonify({"error": "Failed to serve edited audio file"}), 500
-
-@app.route('/ai-edit', methods=['POST'])
-@require_auth()
-@require_rate_limit("10 per minute, 100 per hour")
-@error_handler
-def ai_edit_timeline():
-    """AI-powered timeline editing via natural language prompts"""
-    try:
-        # Validate request
-        data = validate_json_request(request)
-        job_id = validate_job_id(data.get('job_id'))
-        prompt = data.get('prompt', '').strip()
-        params = data.get('params')  # Get params from AI chat handler
-
-        if not prompt:
-            return jsonify({"error": "Prompt is required"}), 400
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        if job_status.get("status") != "completed":
-            return jsonify({"error": "Job must be completed before AI editing"}), 400
-
-        # Get timeline data (would load from processed result)
-        from parsers.xml_parser import FCP7XMLParser
-        from parsers.xml_writer import FCP7XMLWriter
-        from services.ai_editor import AITimelineEditor
-
-        timeline_file = job_status.get("timeline_file")
-        if not timeline_file or not os.path.exists(timeline_file):
-            return jsonify({"error": "Timeline file not found"}), 404
-
-        # Parse original timeline
-        parser = FCP7XMLParser()
-        timeline = parser.parse_file(timeline_file)
-
-        # Load transcription data if available
-        transcription_data = job_status.get("result", {}).get("transcription")
-
-        # Process with AI editor (pass params for short-form and other operations)
-        editor = AITimelineEditor()
-        result = editor.process_prompt(prompt, timeline, transcription_data, params)
-
-        if not result.get('success'):
-            error_message = result.get('message', 'AI edit failed')
-            logger.error(f"AI edit failed for job {job_id}: {error_message}")
-            logger.error(f"Params received: {params}")
-            return jsonify({
-                "job_id": job_id,
-                "success": False,
-                "message": error_message,
-                "prompt": prompt
-            }), 400
-
-        # Save edited timeline to disk
-        edited_timeline = result.get('timeline')
-        output_filename = f"{job_id}_ai_edited.xml"
-        output_path = os.path.join(Config.TEMP_FOLDER, output_filename)
-
-        writer = FCP7XMLWriter()
-        if writer.write_timeline(edited_timeline, output_path):
-            # Generate edited audio file from the edited timeline
-            from services.audio_extractor import AudioExtractor
-
-            audio_file = job_status.get("audio_file")
-            edited_audio_filename = f"{job_id}_ai_edited_audio.wav"
-            edited_audio_path = os.path.join(Config.TEMP_FOLDER, edited_audio_filename)
-
-            extractor = AudioExtractor()
-            audio_generated = extractor.extract_audio_from_timeline(
-                original_audio_path=audio_file,
-                timeline=edited_timeline,
-                output_path=edited_audio_path,
-                crossfade_ms=50  # 50ms crossfade for smooth transitions
-            )
-
-            # Update job status with new edited timeline path and audio path
-            if isinstance(job_status.get("result"), dict):
-                job_status["result"]["ai_edited_output_file"] = output_path  # Store AI edited timeline separately
-                if audio_generated:
-                    job_status["result"]["edited_audio_file"] = edited_audio_path
-                    logger.info(f"Generated edited audio: {edited_audio_path}")
-                else:
-                    logger.warning(f"Failed to generate edited audio for job {job_id}")
-
-                job_manager.update_job_status(
-                    job_id=job_id,
-                    status=job_status.get("status", "completed"),
-                    result=job_status["result"]
-                )
-
-            logger.info(f"AI edit completed for job {job_id}: {result.get('message')}")
-
-            return jsonify({
-                "job_id": job_id,
-                "success": True,
-                "operation": result.get('operation', 'unknown'),
-                "message": result.get('message', 'Edit completed'),
-                "changes_made": result.get('changes_made', {}),
-                "edited_file": output_path,
-                "prompt": prompt
-            })
-        else:
-            return jsonify({"error": "Failed to save edited timeline"}), 500
-
-    except Exception as e:
-        logger.error(f"Error processing AI edit: {str(e)}")
-        return jsonify({"error": f"AI edit failed: {str(e)}"}), 500
-
-
-@app.route('/ai-chat', methods=['POST'])
-@require_auth()
-@error_handler
-def ai_chat():
-    """Conversational AI endpoint for God Mode chat interface"""
-    try:
-        # Validate request
-        data = validate_json_request(request)
-        job_id = validate_job_id(data.get('job_id'))
-        message = data.get('message', '').strip()
-
-        if not message:
-            return jsonify({"error": "Message is required"}), 400
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        if job_status.get("status") != "completed":
-            return jsonify({"error": "Job must be completed before using AI chat"}), 400
-
-        # Get timeline data
-        from parsers.xml_parser import FCP7XMLParser
-        from services.ai_chat_handler import AIChatHandler
-
-        timeline_file = job_status.get("timeline_file")
-        if not timeline_file or not os.path.exists(timeline_file):
-            return jsonify({"error": "Timeline file not found"}), 404
-
-        # Parse timeline
-        parser = FCP7XMLParser()
-        timeline = parser.parse_file(timeline_file)
-
-        # Load transcription data if available
-        transcription_data = job_status.get("result", {}).get("transcription")
-
-        # Process with chat handler
-        chat_handler = AIChatHandler()
-        response = chat_handler.analyze_message(message, timeline, transcription_data)
-
-        logger.info(f"AI chat response for job {job_id}: needs_confirmation={response.get('needs_confirmation')}")
-
-        return jsonify({
-            "job_id": job_id,
-            "message": response.get('message'),
-            "needs_confirmation": response.get('needs_confirmation', False),
-            "options": response.get('options', []),
-            "preview_data": response.get('preview_data')
-        })
-
-    except Exception as e:
-        logger.error(f"Error processing AI chat: {str(e)}")
-        return jsonify({"error": f"AI chat failed: {str(e)}"}), 500
-
-
-@app.route('/ai-greeting/<job_id>', methods=['GET'])
-@require_auth()
-@error_handler
-def ai_get_intelligent_greeting(job_id):
-    """Get intelligent greeting with content analysis-based suggestions"""
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        if job_status.get("status") != "completed":
-            return jsonify({"error": "Job must be completed before accessing God Mode"}), 400
-
-        # Get content analysis if available
-        result = job_status.get("result", {})
-        content_analysis = result.get("content_analysis")
-
-        # Generate intelligent greeting
-        from services.ai_chat_handler import AIChatHandler
-        chat_handler = AIChatHandler()
-        greeting_response = chat_handler.get_intelligent_greeting(content_analysis)
-
-        logger.info(f"Generated intelligent greeting for job {job_id}: {bool(content_analysis)} analysis available")
-
-        return jsonify({
-            "job_id": job_id,
-            "greeting": greeting_response.get('message'),
-            "needs_confirmation": greeting_response.get('needs_confirmation', False),
-            "options": greeting_response.get('options', []),
-            "has_analysis": bool(content_analysis)
-        })
-
-    except Exception as e:
-        logger.error(f"Error generating greeting: {str(e)}")
-        return jsonify({"error": f"Greeting generation failed: {str(e)}"}), 500
-
-
-@app.route('/knowledge-base/<job_id>', methods=['GET'])
-@require_auth()
-@error_handler
-def get_knowledge_base(job_id):
-    """Get knowledge base for a completed job"""
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        # Get content analysis
-        result = job_status.get("result", {})
-        content_analysis = result.get("content_analysis", {})
-
-        return jsonify({
-            "job_id": job_id,
-            "content_analysis": content_analysis
-        })
-
-    except Exception as e:
-        logger.error(f"Error retrieving knowledge base: {str(e)}")
-        return jsonify({"error": f"Failed to retrieve knowledge base: {str(e)}"}), 500
-
-
-@app.route('/knowledge-base/<job_id>', methods=['PUT'])
-@require_auth()
-@error_handler
-def update_knowledge_base(job_id):
-    """Update knowledge base with user edits"""
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Validate request
-        data = validate_json_request(request)
-        updated_kb = data.get('content_analysis')
-
-        if not updated_kb:
-            return jsonify({"error": "content_analysis is required"}), 400
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        # Mark as user-modified
-        from datetime import datetime
-        if 'metadata' not in updated_kb:
-            updated_kb['metadata'] = {}
-        updated_kb['metadata']['user_modified'] = True
-        updated_kb['metadata']['last_edited'] = datetime.utcnow().isoformat()
-
-        # Update job result
-        if 'result' not in job_status:
-            job_status['result'] = {}
-        job_status['result']['content_analysis'] = updated_kb
-
-        # Persist changes
-        job_manager.update_job_status(
-            job_id=job_id,
-            status=job_status.get("status", "completed"),
-            result=job_status['result']
-        )
-
-        logger.info(f"Knowledge base updated for job {job_id} by user")
-
-        return jsonify({
-            "success": True,
-            "message": "Knowledge base updated successfully",
-            "content_analysis": updated_kb
-        })
-
-    except Exception as e:
-        logger.error(f"Error updating knowledge base: {str(e)}")
-        return jsonify({"error": f"Failed to update knowledge base: {str(e)}"}), 500
-
-
-@app.route('/re-analyze/<job_id>', methods=['POST'])
-@require_auth()
-@error_handler
-def re_analyze_job(job_id):
-    """Manually re-run content analysis on a completed job"""
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                return jsonify({"error": "Job not found"}), 404
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            return jsonify({"error": "Job not found"}), 404
-
-        # Check if job is completed
-        if job_status.get("status") != "completed":
-            return jsonify({"error": "Job must be completed before re-analysis"}), 400
-
-        # Get transcription data
-        result = job_status.get("result", {})
-        transcription_data = result.get("transcription")
-
-        if not transcription_data:
-            return jsonify({"error": "No transcription data available for analysis"}), 400
-
-        # Run content analysis
-        from services.content_analyzer import ContentAnalyzer
-        analyzer = ContentAnalyzer()
-
-        logger.info(f"Re-analyzing content for job {job_id}")
-        content_analysis = analyzer.analyze_content(transcription_data)
-
-        # Update job result with new content_analysis
-        result['content_analysis'] = content_analysis
-        job_manager.update_job_status(job_id, job_status['status'], result)
-
-        logger.info(f"Re-analysis complete for job {job_id}: {content_analysis.get('main_topic', 'Unknown')}")
-
-        return jsonify({
-            "success": True,
-            "message": "Content analysis updated successfully",
-            "content_analysis": content_analysis
-        })
-
-    except Exception as e:
-        logger.error(f"Error re-analyzing job: {str(e)}")
-        return jsonify({"error": f"Re-analysis failed: {str(e)}"}), 500
-
-
-@app.route('/ai-preview', methods=['POST'])
-@require_auth()
-@error_handler
-def ai_preview():
-    """Generate preview of AI operation before executing"""
-    try:
-        # Validate request
-        data = validate_json_request(request)
-        job_id = validate_job_id(data.get('job_id'))
-        params = data.get('params', {})
-
-        if not params:
-            return jsonify({"error": "Parameters are required"}), 400
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        if job_status.get("status") != "completed":
-            return jsonify({"error": "Job must be completed before preview"}), 400
-
-        # Get timeline data
-        from parsers.xml_parser import FCP7XMLParser
-        from services.ai_chat_handler import AIChatHandler
-
-        timeline_file = job_status.get("timeline_file")
-        if not timeline_file or not os.path.exists(timeline_file):
-            return jsonify({"error": "Timeline file not found"}), 404
-
-        # Parse timeline
-        parser = FCP7XMLParser()
-        timeline = parser.parse_file(timeline_file)
-
-        # Load transcription data if available
-        transcription_data = job_status.get("result", {}).get("transcription")
-
-        # Generate preview
-        chat_handler = AIChatHandler()
-        preview = chat_handler.generate_preview(params, timeline, transcription_data)
-
-        logger.info(f"Generated preview for job {job_id}: {preview.get('operation')}")
-
-        return jsonify({
-            "job_id": job_id,
-            "preview": preview
-        })
-
-    except Exception as e:
-        logger.error(f"Error generating preview: {str(e)}")
-        return jsonify({"error": f"Preview generation failed: {str(e)}"}), 500
-
-
-@app.route('/auto-analyze/<job_id>', methods=['POST'])
-@require_auth()
-@error_handler
-def auto_analyze_content(job_id):
-    """
-    Automatically analyze completed job content and generate intelligent repurposing options.
-    This is the proactive God Mode feature that suggests edits based on content type detection.
-    """
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        # Only analyze completed jobs
-        if job_status.get("status") != "completed":
-            return jsonify({"error": "Job must be completed before auto-analysis"}), 400
-
-        # Get transcription and audio analysis data
-        result = job_status.get("result", {})
-        transcription_data = result.get("transcription")
-        audio_analysis = result.get("audio_analysis")
-
-        if not transcription_data:
-            return jsonify({
-                "error": "Transcription data required for content analysis",
-                "recommendation": "Enable transcription when processing to use auto-analysis"
-            }), 400
-
-        # Initialize content analyzer
-        analyzer = ContentAnalyzer()
-
-        # Run content analysis
-        logger.info(f"Running auto-analysis for job {job_id}")
-        analysis_result = analyzer.analyze_content(
-            transcription_data=transcription_data,
-            audio_analysis_data=audio_analysis
-        )
-
-        # Store analysis in job metadata
-        if "content_analysis" not in result:
-            result["content_analysis"] = {}
-
-        result["content_analysis"] = {
-            "analyzed_at": datetime.now().isoformat(),
-            "content_type": analysis_result.get("content_type"),
-            "key_moments": analysis_result.get("key_moments", []),
-            "repurposing_options": analysis_result.get("repurposing_options", []),
-            "stats": analysis_result.get("stats", {}),
-            "quality_score": analysis_result.get("quality_score", 0.0)
-        }
-
-        # Update job status with analysis using store_task_result
-        job_manager.store_task_result(job_id, result)
-
-        content_type = analysis_result.get('content_type', {})
-        primary_type = content_type.get('primary_type', 'unknown') if isinstance(content_type, dict) else content_type
-
-        logger.info(
-            f"Auto-analysis complete for job {job_id}: "
-            f"{primary_type} content, "
-            f"{len(analysis_result.get('repurposing_options', []))} options generated"
-        )
-
-        return jsonify({
-            "job_id": job_id,
-            "status": "analyzed",
-            "analysis": {
-                "content_type": analysis_result.get("content_type"),
-                "key_moments_count": len(analysis_result.get("key_moments", [])),
-                "repurposing_options": analysis_result.get("repurposing_options", []),
-                "stats": analysis_result.get("stats", {}),
-                "quality_score": analysis_result.get("quality_score", 0.0),
-                "recommendations": analysis_result.get("recommendations", [])
-            }
-        })
-
-    except Exception as e:
-        logger.error(f"Error during auto-analysis: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Auto-analysis failed: {str(e)}"}), 500
-
-
-@app.route('/timeline-comparison/<job_id>', methods=['GET'])
-@require_auth()
-@error_handler
-def get_timeline_comparison(job_id):
-    """Get timeline comparison data (original vs edited) for visual preview"""
-    try:
-        # Validate job ID
-        job_id = validate_job_id(job_id)
-
-        # Get job status
-        try:
-            job_status = job_manager.get_job_status(job_id)
-            if not job_status:
-                if job_id not in processing_jobs:
-                    return jsonify({"error": "Job not found"}), 404
-                job_status = processing_jobs[job_id]
-        except Exception as e:
-            logger.error(f"Failed to get job status: {str(e)}")
-            if job_id not in processing_jobs:
-                return jsonify({"error": "Job not found"}), 404
-            job_status = processing_jobs[job_id]
-
-        if job_status.get("status") != "completed":
-            return jsonify({"error": "Job must be completed before comparison"}), 400
-
-        # Get original and edited timeline files
-        from parsers.xml_parser import FCP7XMLParser
-
-        original_timeline_file = job_status.get("timeline_file")
-        # Check for AI edited timeline first, fallback to processed timeline
-        edited_timeline_file = (
-            job_status.get("result", {}).get("ai_edited_output_file") or
-            job_status.get("result", {}).get("output_file")
-        )
-
-        if not original_timeline_file or not os.path.exists(original_timeline_file):
-            return jsonify({"error": "Original timeline file not found"}), 404
-
-        # Parse original timeline
-        parser = FCP7XMLParser()
-        original_timeline = parser.parse_file(original_timeline_file)
-
-        # Parse edited timeline (if exists)
-        edited_timeline = None
-        if edited_timeline_file and os.path.exists(edited_timeline_file):
-            edited_timeline = parser.parse_file(edited_timeline_file)
-
-        # Generate comparison data
-        comparison = generate_timeline_comparison(original_timeline, edited_timeline)
-
-        return jsonify({
-            "job_id": job_id,
-            "has_edits": edited_timeline is not None,
-            "original": comparison["original"],
-            "edited": comparison["edited"],
-            "diff": comparison["diff"],
-            "stats": comparison["stats"]
-        })
-
-    except Exception as e:
-        logger.error(f"Error generating timeline comparison: {str(e)}")
-        return jsonify({"error": f"Comparison failed: {str(e)}"}), 500
-
-def generate_timeline_comparison(original_timeline, edited_timeline=None):
-    """Generate comparison data for visual timeline preview"""
-
-    # Extract clips from original timeline
-    original_clips = []
-    for track in original_timeline.tracks:
-        for clip in track.clips:
-            original_clips.append({
-                "name": clip.name,
-                "start": clip.start_time,
-                "end": clip.end_time,
-                "duration": clip.duration,
-                "track": track.index,
-                "track_name": track.name,
-                "enabled": clip.enabled
-            })
-
-    # Calculate original duration
-    original_duration = original_timeline.calculate_duration()
-
-    # If no edited timeline, return only original data
-    if not edited_timeline:
-        return {
-            "original": {
-                "clips": original_clips,
-                "duration": original_duration,
-                "total_clips": len(original_clips)
-            },
-            "edited": None,
-            "diff": {
-                "removed_regions": [],
-                "kept_regions": original_clips,
-                "total_removed_duration": 0,
-                "compression_ratio": 1.0
-            },
-            "stats": {
-                "original_duration": original_duration,
-                "edited_duration": original_duration,
-                "time_saved": 0,
-                "clips_removed": 0,
-                "compression_percentage": 0
-            }
-        }
-
-    # Extract clips from edited timeline
-    edited_clips = []
-    for track in edited_timeline.tracks:
-        for clip in track.clips:
-            edited_clips.append({
-                "name": clip.name,
-                "start": clip.start_time,
-                "end": clip.end_time,
-                "duration": clip.duration,
-                "track": track.index,
-                "track_name": track.name,
-                "enabled": clip.enabled
-            })
-
-    # Calculate edited duration
-    edited_duration = edited_timeline.calculate_duration()
-
-    # Calculate diff regions (what was removed)
-    removed_regions = calculate_removed_regions(original_clips, edited_clips)
-    kept_regions = edited_clips
-
-    # Calculate statistics
-    total_removed_duration = sum(region["duration"] for region in removed_regions)
-    time_saved = original_duration - edited_duration
-
-    # Handle edge cases for division by zero
-    if original_duration == 0 and edited_duration == 0:
-        # Both timelines are empty
-        compression_ratio = 1.0
-        compression_percentage = 0
-    elif original_duration == 0:
-        # Original timeline is empty but edited has content (shouldn't happen, but handle it)
-        compression_ratio = 0
-        compression_percentage = 0
-    else:
-        # Normal case: calculate ratio
-        compression_ratio = edited_duration / original_duration
-        compression_percentage = (1 - compression_ratio) * 100
-
-    return {
-        "original": {
-            "clips": original_clips,
-            "duration": original_duration,
-            "total_clips": len(original_clips)
-        },
-        "edited": {
-            "clips": edited_clips,
-            "duration": edited_duration,
-            "total_clips": len(edited_clips)
-        },
-        "diff": {
-            "removed_regions": removed_regions,
-            "kept_regions": kept_regions,
-            "total_removed_duration": total_removed_duration,
-            "compression_ratio": compression_ratio
-        },
-        "stats": {
-            "original_duration": original_duration,
-            "edited_duration": edited_duration,
-            "time_saved": time_saved,
-            "clips_removed": len(original_clips) - len(edited_clips),
-            "compression_percentage": round(compression_percentage, 2)
-        }
-    }
-
-def calculate_removed_regions(original_clips, edited_clips):
-    """Calculate which time regions were removed from the timeline"""
-    removed_regions = []
-
-    # Sort clips by start time
-    original_sorted = sorted(original_clips, key=lambda c: c["start"])
-    edited_sorted = sorted(edited_clips, key=lambda c: c["start"])
-
-    # Simple diff: find original clips that don't exist in edited
-    # This is a simplified version - real implementation would be more sophisticated
-    edited_times = set()
-    for clip in edited_sorted:
-        for t in range(int(clip["start"] * 100), int(clip["end"] * 100)):
-            edited_times.add(t)
-
-    for clip in original_sorted:
-        # Check if this original clip is mostly missing in edited
-        original_time_range = range(int(clip["start"] * 100), int(clip["end"] * 100))
-        overlap = sum(1 for t in original_time_range if t in edited_times)
-
-        # Handle zero-length clips (avoid division by zero)
-        time_range_len = len(list(original_time_range))
-        if time_range_len == 0:
-            continue  # Skip zero-length clips
-
-        if overlap / time_range_len < 0.5:  # Less than 50% overlap
-            removed_regions.append({
-                "start": clip["start"],
-                "end": clip["end"],
-                "duration": clip["duration"],
-                "name": clip["name"]
-            })
-
-    return removed_regions
-
-@app.route('/transcription/<job_id>', methods=['GET'])
-@require_auth()
-def get_transcription(job_id):
-    """Get transcription data for a job"""
-    # Validate job ID
-    job_id = validate_job_id(job_id)
-
-    # Get job data from job manager (handles both memory and file storage)
-    job = job_manager.get_job_status(job_id)
-
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-
-    # Check if transcription is available in the result
-    result = job.get("result", {})
-    if not result.get("transcription_available"):
-        return jsonify({"error": "No transcription available for this job"}), 404
-
-    # Return transcription data from result
-    transcription_data = result.get("transcription")
-    if not transcription_data:
-        return jsonify({"error": "Transcription data not found"}), 404
-
-    # Transform segments to frontend-expected format with word-level timestamps
-    # Frontend expects: {timestamp, speaker, text, confidence, words}
-    # Backend provides: {start, end, speaker, text, confidence, words}
-    segments = transcription_data.get('segments', [])
-    transformed_segments = []
-
-    for seg in segments:
-        # Transform word-level data for karaoke-style highlighting
-        words = seg.get('words', [])
-        transformed_words = []
-        for word in words:
-            transformed_words.append({
-                'word': word.get('word', '').strip(),
-                'start': word.get('start', 0),
-                'end': word.get('end', 0),
-                'confidence': word.get('probability', 0.85)
-            })
-
-        transformed_segments.append({
-            'timestamp': seg.get('start', 0),  # Use 'start' time as timestamp
-            'speaker': seg.get('speaker', 'UNKNOWN'),
-            'text': seg.get('text', ''),
-            'confidence': seg.get('confidence', 0.85),
-            'words': transformed_words  # Include word-level timestamps
-        })
-
-    # Return transformed data with metadata
-    return jsonify({
-        "transcription": transformed_segments,
-        "job_id": job_id,
-        "metadata": {
-            "duration": transcription_data.get('duration', 0),
-            "word_count": transcription_data.get('word_count', 0),
-            "num_speakers": transcription_data.get('num_speakers', 0),
-            "provider": transcription_data.get('provider', 'unknown'),
-            "confidence": transcription_data.get('confidence', 0.85)
-        }
-    })
-
-@app.route('/ai-enhancements/<job_id>', methods=['GET'])
-def get_ai_enhancements(job_id):
-    """Get AI enhancement data for a completed job"""
-    # Validate job ID
-    job_id = validate_job_id(job_id)
-
-    if job_id not in processing_jobs:
-        return jsonify({"error": "Job not found"}), 404
-
-    job = processing_jobs[job_id]
-
-    if job["status"] != "completed":
-        return jsonify({"error": f"Job status is {job['status']}, enhancements not available"}), 400
-
-    ai_enhancements = job.get("ai_enhancements")
-    if not ai_enhancements:
-        return jsonify({"error": "No AI enhancements available for this job"}), 404
-
-    return jsonify({
-        "job_id": job_id,
-        "ai_enhancements": ai_enhancements,
-        "enhancement_summary": ai_enhancements.get('applied_enhancements', []) if ai_enhancements.get('success') else []
-    })
-
-@app.route('/preview/<job_id>', methods=['GET'])
-def get_processing_preview(job_id):
-    """Get a preview of what processing would do without actually processing"""
-    # Validate job ID
-    job_id = validate_job_id(job_id)
-
-    if job_id not in processing_jobs:
-        return jsonify({"error": "Job not found"}), 404
-
-    job = processing_jobs[job_id]
-
-    # Allow multiple valid statuses for preview
-    allowed_statuses = ["uploaded", "ready", "queued"]
-    if job["status"] not in allowed_statuses:
-        return jsonify({"error": f"Preview only available for jobs in status: {allowed_statuses}"}), 400
-
-    try:
-        # Use the timeline editing engine to get preview
-        from services.timeline_editor import TimelineEditingEngine
-
-        timeline_editor = TimelineEditingEngine()
-        preview = timeline_editor.get_processing_preview(
-            job["audio_file"],
-            job["timeline_file"]
-        )
-
-        return jsonify({
-            "job_id": job_id,
-            "preview": preview
-        })
-
-    except Exception as e:
-        logger.error(f"Error generating preview for job {job_id}: {str(e)}")
-        return jsonify({"error": "Failed to generate preview"}), 500
-
 @app.route('/jobs', methods=['GET'])
 def list_jobs():
     """List all processing jobs from job manager and in-memory storage"""
@@ -1719,7 +248,7 @@ def list_jobs():
         status = request.args.get('status')
 
         # Get jobs from job manager (Redis)
-        async_jobs = job_manager.list_jobs(limit=limit, job_type=job_type, status=status)
+        async_jobs = [] # job_manager.list_jobs(limit=limit, job_type=job_type, status=status)
 
         # Get jobs from in-memory storage (fallback)
         memory_jobs = []
@@ -1773,7 +302,7 @@ def cancel_job(job_id):
         job_id = validate_job_id(job_id)
 
         # Try to cancel in job manager
-        success = job_manager.cancel_job(job_id)
+        success = [] # job_manager.cancel_job(job_id)
 
         if success:
             # Also update in-memory storage if exists
@@ -1822,7 +351,7 @@ def manual_cleanup():
         task = cleanup_files_task.delay()
 
         # Also clean up old jobs from Redis
-        cleaned_jobs = job_manager.cleanup_old_jobs()
+        cleaned_jobs = [] # job_manager.cleanup_old_jobs()
 
         # Clean up in-memory jobs
         jobs_before = len(processing_jobs)
@@ -1897,7 +426,6 @@ def upload_video():
         }
 
         processing_jobs[job_id] = job_data
-        job_manager._store_job_data(job_id, job_data)
 
         logger.info(f"Video job created: {job_id}")
 
@@ -1916,8 +444,8 @@ def upload_video():
         }), 200
 
     except Exception as e:
-        logger.error(f"Video upload error: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Video upload error: {str(e)}", exc_info=True)
+        raise  # Let @error_handler decorator sanitize the response
 
 @app.route('/analyze-video/<job_id>', methods=['POST'])
 @require_auth()
@@ -1933,7 +461,7 @@ def analyze_video(job_id):
         job_id = validate_job_id(job_id)
 
         # Get job
-        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        job_data = processing_jobs.get(job_id)  # Removed job_manager fallback
         if not job_data:
             return jsonify({"error": "Job not found"}), 404
 
@@ -1949,7 +477,6 @@ def analyze_video(job_id):
         job_data['progress'] = 10
         job_data['message'] = 'Starting video analysis...'
         processing_jobs[job_id] = job_data
-        job_manager.update_job_status(job_id, 'analyzing', message='Starting video analysis')
 
         # Start background processing
         def analyze_video_task():
@@ -1969,14 +496,12 @@ def analyze_video(job_id):
                     job_data['status'] = 'failed'
                     job_data['message'] = 'Audio extraction failed'
                     processing_jobs[job_id] = job_data
-                    job_manager.update_job_status(job_id, 'failed', message='Audio extraction failed')
                     return
 
                 job_data['audio_file'] = audio_path
                 job_data['progress'] = 20
                 job_data['message'] = 'Audio extracted, starting transcription...'
                 processing_jobs[job_id] = job_data
-                job_manager.update_job_status(job_id, 'analyzing', message='Starting transcription', progress=20)
 
                 # Step 2: Transcribe audio
                 logger.info(f"[{job_id}] Transcribing audio...")
@@ -1987,14 +512,12 @@ def analyze_video(job_id):
                     job_data['status'] = 'failed'
                     job_data['message'] = 'Transcription failed'
                     processing_jobs[job_id] = job_data
-                    job_manager.update_job_status(job_id, 'failed', message='Transcription failed')
                     return
 
                 job_data['transcription'] = transcription_result
                 job_data['progress'] = 80
                 job_data['message'] = 'Transcription complete, detecting repeated takes...'
                 processing_jobs[job_id] = job_data
-                job_manager.update_job_status(job_id, 'analyzing', message='Detecting repeated takes', progress=80)
 
                 # Step 3: Detect repeated takes
                 logger.info(f"[{job_id}] Detecting repeated takes...")
@@ -2009,7 +532,6 @@ def analyze_video(job_id):
                 job_data['progress'] = 100
                 job_data['message'] = 'Analysis complete'
                 processing_jobs[job_id] = job_data
-                job_manager.update_job_status(job_id, 'analyzed', message='Analysis complete', progress=100)
 
                 logger.info(f"[{job_id}] Video analysis complete")
 
@@ -2018,7 +540,6 @@ def analyze_video(job_id):
                 job_data['status'] = 'failed'
                 job_data['message'] = f'Analysis failed: {str(e)}'
                 processing_jobs[job_id] = job_data
-                job_manager.update_job_status(job_id, 'failed', message=str(e))
 
         # Run in thread
         import threading
@@ -2040,28 +561,73 @@ def analyze_video(job_id):
 @require_auth()
 @error_handler
 def get_video_analysis(job_id):
-    """Get analysis results (detected segments)"""
+    """
+    Get analysis status and results for video job (Phase 2: Cloud Result Loop).
+
+    Returns current status of transcoding + analysis, and analysis results when complete.
+    Frontend polls this endpoint to track progress and get final analysis data.
+    """
     try:
+        from models import VideoJob, VideoJobStatus
         from utils.error_handlers import validate_job_id
+
         job_id = validate_job_id(job_id)
 
-        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
-        if not job_data:
+        # Get VideoJob from video_jobs dict
+        video_job = video_jobs.get(job_id)
+        if not video_job:
             return jsonify({"error": "Job not found"}), 404
 
-        if job_data.get('type') != 'video_editing':
-            return jsonify({"error": "Not a video editing job"}), 400
+        # Map VideoJobStatus to frontend expected status
+        status_map = {
+            VideoJobStatus.UPLOADED: 'processing',
+            VideoJobStatus.TRANSCODING: 'processing',
+            VideoJobStatus.READY: 'analyzing',
+            VideoJobStatus.ANALYZING: 'analyzing',
+            VideoJobStatus.ANALYZED: 'analyzed',
+            VideoJobStatus.FAILED: 'failed',
+            VideoJobStatus.CANCELLED: 'failed'
+        }
 
-        return jsonify({
+        frontend_status = status_map.get(video_job.status, 'processing')
+
+        # Calculate progress based on stage
+        if video_job.status == VideoJobStatus.TRANSCODING:
+            # Transcoding is 0-70%
+            progress = int(video_job.transcode_progress * 70)
+        elif video_job.status == VideoJobStatus.READY:
+            # Transcode complete, analysis about to start
+            progress = 70
+        elif video_job.status == VideoJobStatus.ANALYZING:
+            # Analysis in progress (70-90%)
+            progress = 80
+        elif video_job.status == VideoJobStatus.ANALYZED:
+            # Complete
+            progress = 100
+        else:
+            # Initial stages
+            progress = 10
+
+        # Build response
+        response = {
             "job_id": job_id,
-            "status": job_data.get('status'),
-            "progress": job_data.get('progress', 0),
-            "message": job_data.get('message', ''),
-            "analysis": job_data.get('analysis', {})
-        }), 200
+            "status": frontend_status,
+            "progress": progress,
+            "message": f"Status: {video_job.status.value}"
+        }
+
+        # Include analysis data if complete
+        if video_job.status == VideoJobStatus.ANALYZED and video_job.analysis:
+            response["analysis"] = video_job.analysis
+
+        # Include error if failed
+        if video_job.status == VideoJobStatus.FAILED:
+            response["message"] = video_job.error_message or video_job.transcode_error or "Processing failed"
+
+        return jsonify(response), 200
 
     except Exception as e:
-        logger.error(f"Get video analysis error: {str(e)}")
+        logger.error(f"Get video analysis error: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/apply-video-cuts/<job_id>', methods=['POST'])
@@ -2080,7 +646,7 @@ def apply_video_cuts(job_id):
         encoding_method = data.get('encoding_method', 'reencode')
 
         # Get job
-        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        job_data = processing_jobs.get(job_id)  # Removed job_manager fallback
         if not job_data:
             return jsonify({"error": "Job not found"}), 404
 
@@ -2105,7 +671,6 @@ def apply_video_cuts(job_id):
         job_data['progress'] = 10
         job_data['message'] = 'Cutting video...'
         processing_jobs[job_id] = job_data
-        job_manager.update_job_status(job_id, 'processing', message='Cutting video', progress=10)
 
         # Start background processing
         def cut_video_task():
@@ -2125,7 +690,6 @@ def apply_video_cuts(job_id):
                     job_data['status'] = 'failed'
                     job_data['message'] = 'Video cutting failed'
                     processing_jobs[job_id] = job_data
-                    job_manager.update_job_status(job_id, 'failed', message='Video cutting failed')
                     return
 
                 job_data['output_video_file'] = output_path
@@ -2133,7 +697,6 @@ def apply_video_cuts(job_id):
                 job_data['progress'] = 100
                 job_data['message'] = 'Video editing complete'
                 processing_jobs[job_id] = job_data
-                job_manager.update_job_status(job_id, 'completed', message='Video editing complete', progress=100)
 
                 logger.info(f"[{job_id}] Video cutting complete: {output_path}")
 
@@ -2142,7 +705,6 @@ def apply_video_cuts(job_id):
                 job_data['status'] = 'failed'
                 job_data['message'] = f'Cutting failed: {str(e)}'
                 processing_jobs[job_id] = job_data
-                job_manager.update_job_status(job_id, 'failed', message=str(e))
 
         # Run in thread
         import threading
@@ -2170,7 +732,7 @@ def download_cut_video(job_id):
         from utils.error_handlers import validate_job_id
         job_id = validate_job_id(job_id)
 
-        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        job_data = processing_jobs.get(job_id)  # Removed job_manager fallback
         if not job_data:
             return jsonify({"error": "Job not found"}), 404
 
@@ -2202,7 +764,7 @@ def download_video_xml(job_id):
         from utils.error_handlers import validate_job_id
         job_id = validate_job_id(job_id)
 
-        job_data = processing_jobs.get(job_id) or job_manager.get_job_status(job_id)
+        job_data = processing_jobs.get(job_id)  # Removed job_manager fallback
         if not job_data:
             return jsonify({"error": "Job not found"}), 404
 
@@ -2225,7 +787,7 @@ def download_video_xml(job_id):
 @error_handler
 def check_video_system():
     """
-    Check if video processing system is ready (FFmpeg availability)
+    Check if video processing system is ready (FFmpeg or Cloud)
 
     Returns:
         {
@@ -2240,14 +802,46 @@ def check_video_system():
                 'linux': str
             },
             'install_url': str,
-            'ffmpeg_version': str | None
+            'ffmpeg_version': str | None,
+            'cloud_processing': bool,
+            'replicate_configured': bool
         }
     """
     try:
         import subprocess
         import platform
 
-        # Check FFmpeg
+        # Determine platform
+        system = platform.system().lower()
+
+        # Check if cloud processing is enabled
+        if Config.USE_CLOUD_VIDEO_PROCESSING:
+            replicate_configured = bool(Config.REPLICATE_API_TOKEN)
+
+            if replicate_configured:
+                return jsonify({
+                    'status': 'ready',
+                    'mode': 'cloud',
+                    'ffmpeg_available': False,
+                    'ffprobe_available': False,
+                    'message': 'Video processing uses cloud-based Replicate models (no local FFmpeg required)',
+                    'platform': system,
+                    'cloud_processing': True,
+                    'replicate_configured': True,
+                    'install_instructions': {
+                        'windows': 'Cloud processing is enabled - no FFmpeg installation required',
+                        'macos': 'Cloud processing is enabled - no FFmpeg installation required',
+                        'linux': 'Cloud processing is enabled - no FFmpeg installation required'
+                    },
+                    'install_url': 'https://replicate.com',
+                    'ffmpeg_version': None
+                })
+            else:
+                # Cloud mode enabled but no API token
+                logger.warning("Cloud processing enabled but REPLICATE_API_TOKEN not configured")
+                # Fall back to FFmpeg check
+
+        # Check FFmpeg (local mode or fallback)
         ffmpeg_available = False
         ffmpeg_version = None
         try:
@@ -2336,7 +930,9 @@ def check_video_system():
             'platform': system,
             'install_instructions': install_instructions,
             'install_url': install_url,
-            'ffmpeg_version': ffmpeg_version
+            'ffmpeg_version': ffmpeg_version,
+            'cloud_processing': False,
+            'replicate_configured': bool(Config.REPLICATE_API_TOKEN)
         })
 
     except Exception as e:
@@ -2353,8 +949,1570 @@ def check_video_system():
                 'linux': 'System check error occurred'
             },
             'install_url': 'https://ffmpeg.org/download.html',
-            'ffmpeg_version': None
+            'ffmpeg_version': None,
+            'cloud_processing': False,
+            'replicate_configured': False
         }), 500
+
+# ==========================================
+# VIDEO AI EDITOR ENDPOINTS
+# ==========================================
+
+@app.route('/video/ai-chat', methods=['POST'])
+@cross_origin(origins="*")
+@require_auth()
+@error_handler
+def video_ai_chat():
+    """
+    Process natural language video editing prompt
+
+    Request body:
+        {
+            "job_id": "uuid",
+            "message": "remove repetitive takes"
+        }
+
+    Returns:
+        {
+            "intent": "remove_repeated_takes",
+            "confidence": 0.9,
+            "message": "I found 5 repeated takes to remove",
+            "preview": {
+                "operation": "remove_repeated_takes",
+                "description": "...",
+                "segments_affected": 5,
+                "time_saved": 45.2,
+                "new_duration": 180.5
+            },
+            "needs_confirmation": true
+        }
+    """
+    try:
+        data = request.get_json()
+        job_id = data.get('job_id')
+        message = data.get('message')
+
+        if not job_id or not message:
+            return jsonify({"error": "job_id and message are required"}), 400
+
+        # Get job data
+        job = processing_jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+
+        if job.get('type') != 'video_editing':
+            return jsonify({"error": "Not a video editing job"}), 400
+
+        if job.get('status') not in ['analyzed', 'completed']:
+            return jsonify({"error": "Video analysis not complete"}), 400
+
+        # Detect intent using AIChatHandler
+        from services.ai_chat_handler import AIChatHandler
+        handler = AIChatHandler()
+
+        # Use keyword-based detection for video (faster than LLM)
+        intent_data = handler._detect_intent_keywords(message)
+        intent = intent_data.get('intent')
+
+        logger.info(f"Video AI chat - Intent: {intent} for job {job_id}")
+
+        # Execute operation using VideoAIOperations
+        from services.video_ai_operations import VideoAIOperations
+        ops = VideoAIOperations(
+            job_data=job,
+            transcription_data=job.get('transcription')
+        )
+
+        # Route to appropriate operation
+        preview_result = None
+
+        if intent == 'remove_repeated_takes':
+            preview_result = ops.remove_repeated_takes()
+        elif intent == 'create_highlight':
+            duration = intent_data.get('duration', 60)
+            preview_result = ops.create_highlight_reel(duration)
+        elif intent == 'remove_silence':
+            threshold = 2.0  # Default 2 seconds
+            preview_result = ops.remove_silence(threshold)
+        elif intent == 'filter_speaker':
+            # Extract speaker number from message
+            import re
+            speaker_match = re.search(r'speaker\s*(\d+)', message.lower())
+            if speaker_match:
+                speaker_id = speaker_match.group(1)
+                preview_result = ops.filter_by_speaker(speaker_id)
+            else:
+                return jsonify({
+                    "error": "Please specify which speaker (e.g., 'Speaker 1')"
+                }), 400
+        elif intent == 'suggest_cut_points':
+            preview_result = ops.suggest_cut_points()
+        else:
+            return jsonify({
+                "error": f"Intent '{intent}' not supported for video editing",
+                "message": "Try: 'remove repetitive takes', 'create 60s highlight', 'remove silence', 'keep only Speaker 1', or 'suggest cut points'"
+            }), 400
+
+        # Check for errors in operation
+        if preview_result.get('error'):
+            return jsonify({
+                "error": preview_result['error'],
+                "message": preview_result.get('description', 'Operation failed')
+            }), 500
+
+        # Return response
+        return jsonify({
+            "intent": intent,
+            "confidence": intent_data.get('confidence', 0.8),
+            "message": preview_result.get('description', 'Operation completed'),
+            "preview": preview_result,
+            "needs_confirmation": True
+        })
+
+    except Exception as e:
+        logger.error(f"Video AI chat error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/video/ai-preview', methods=['POST'])
+@cross_origin(origins="*")
+@require_auth()
+@error_handler
+def video_ai_preview():
+    """
+    Get preview of AI-suggested edits without applying them
+
+    Request body:
+        {
+            "job_id": "uuid",
+            "operation": "remove_repeated_takes",
+            "params": {}
+        }
+
+    Returns:
+        Preview data for visualization
+    """
+    try:
+        data = request.get_json()
+        job_id = data.get('job_id')
+        operation = data.get('operation')
+        params = data.get('params', {})
+
+        if not job_id or not operation:
+            return jsonify({"error": "job_id and operation are required"}), 400
+
+        # Get job data
+        job = processing_jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+
+        # Execute operation
+        from services.video_ai_operations import VideoAIOperations
+        ops = VideoAIOperations(
+            job_data=job,
+            transcription_data=job.get('transcription')
+        )
+
+        # Get preview based on operation
+        if operation == 'remove_repeated_takes':
+            preview = ops.remove_repeated_takes()
+        elif operation == 'create_highlight':
+            duration = params.get('duration', 60)
+            preview = ops.create_highlight_reel(duration)
+        elif operation == 'remove_silence':
+            threshold = params.get('threshold', 2.0)
+            preview = ops.remove_silence(threshold)
+        elif operation == 'filter_speaker':
+            speaker_id = params.get('speaker')
+            if not speaker_id:
+                return jsonify({"error": "speaker parameter required"}), 400
+            preview = ops.filter_by_speaker(speaker_id)
+        elif operation == 'suggest_cut_points':
+            preview = ops.suggest_cut_points()
+        else:
+            return jsonify({"error": f"Unknown operation: {operation}"}), 400
+
+        return jsonify(preview)
+
+    except Exception as e:
+        logger.error(f"Video AI preview error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/video/ai-apply', methods=['POST'])
+@cross_origin(origins="*")
+@require_auth()
+@error_handler
+def video_ai_apply():
+    """
+    Apply AI-suggested edits to timeline
+
+    Request body:
+        {
+            "job_id": "uuid",
+            "operation": "remove_repeated_takes",
+            "params": {}
+        }
+
+    Returns:
+        {
+            "success": true,
+            "updated_clips": [...],
+            "stats": {...}
+        }
+    """
+    try:
+        data = request.get_json()
+        job_id = data.get('job_id')
+        operation = data.get('operation')
+        params = data.get('params', {})
+
+        if not job_id or not operation:
+            return jsonify({"error": "job_id and operation are required"}), 400
+
+        # Get job data
+        job = processing_jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+
+        # Execute operation
+        from services.video_ai_operations import VideoAIOperations
+        ops = VideoAIOperations(
+            job_data=job,
+            transcription_data=job.get('transcription')
+        )
+
+        # Apply operation
+        if operation == 'remove_repeated_takes':
+            result = ops.remove_repeated_takes()
+        elif operation == 'create_highlight':
+            duration = params.get('duration', 60)
+            result = ops.create_highlight_reel(duration)
+        elif operation == 'remove_silence':
+            threshold = params.get('threshold', 2.0)
+            result = ops.remove_silence(threshold)
+        elif operation == 'filter_speaker':
+            speaker_id = params.get('speaker')
+            if not speaker_id:
+                return jsonify({"error": "speaker parameter required"}), 400
+            result = ops.filter_by_speaker(speaker_id)
+        elif operation == 'suggest_cut_points':
+            result = ops.suggest_cut_points()
+        else:
+            return jsonify({"error": f"Unknown operation: {operation}"}), 400
+
+        # Update job with AI-edited segments
+        job['ai_edited_segments'] = result.get('segments', [])
+        job['ai_operation'] = operation
+        job['ai_operation_result'] = result
+
+        # Return updated clips
+        return jsonify({
+            "success": True,
+            "updated_clips": result.get('segments', []),
+            "stats": {
+                "segments_affected": result.get('segments_affected', 0),
+                "time_saved": result.get('time_saved', 0),
+                "new_duration": result.get('new_duration', 0)
+            },
+            "operation": operation
+        })
+
+    except Exception as e:
+        logger.error(f"Video AI apply error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# ==========================================
+# PHASE 1: VIDEO TRANSCODING ENDPOINTS
+# ==========================================
+
+def _trigger_background_transcode(job_id: str):
+    """
+    Trigger background transcoding for a video job.
+
+    This function starts a daemon thread that transcodes the video in the background.
+    The thread updates the VideoJob status, progress, and proxy information as it works.
+
+    Implementation (Sub-Step 1.9):
+    - Launches daemon thread for async processing
+    - Thread-safe VideoJob updates
+    - Prevents duplicate transcoding for same job
+    - Real-time progress tracking
+    - Automatic cleanup on errors
+
+    Args:
+        job_id: Video job ID to process
+    """
+    from services.video_background_processor import start_background_transcode
+
+    logger.info(f"[Phase 1] Triggering background transcode for job: {job_id}")
+
+    # Start background transcoding
+    success = start_background_transcode(job_id, video_jobs)
+
+    if success:
+        logger.info(f"[Phase 1] [OK] Background transcode started for job: {job_id}")
+    else:
+        logger.warning(f"[Phase 1] [WARNING] Background transcode not started (already processing or job not found): {job_id}")
+
+
+@app.route('/upload-video', methods=['POST'])
+@require_auth()
+@require_rate_limit("5 per minute, 50 per hour")
+@error_handler
+def upload_video_phase1():
+    """
+    Phase 1: Upload video file for transcoding to web-optimized proxy.
+
+    This endpoint handles:
+    - Video file upload with validation
+    - Metadata extraction
+    - VideoJob creation
+    - Triggering background transcoding (placeholder)
+
+    Request:
+        Content-Type: multipart/form-data
+        Body:
+            video: <binary file data> (required)
+
+    Response (Success - 202 Accepted):
+        {
+            "success": true,
+            "job_id": "uuid",
+            "message": "Video uploaded successfully",
+            "data": {
+                "original_filename": "video.mp4",
+                "file_size_mb": 2847.5,
+                "duration_seconds": 3600.5,
+                "resolution": "1920x1080",
+                "fps": 30.0,
+                "codec": "h264",
+                "estimated_transcode_time_seconds": 240,
+                "status": "uploaded"
+            }
+        }
+
+    Response (Error - 400/500):
+        {
+            "success": false,
+            "error": "Error message",
+            "code": "ERROR_CODE"
+        }
+    """
+    try:
+        # Import statements moved inside try block for proper error hygiene
+        from models import VideoJob, VideoJobStatus
+        from services.cloud_video_validator import validate_all_cloud_first
+        from utils.error_handlers import (
+            VideoFileTooLargeError,
+            VideoFormatNotSupportedError,
+            VideoCorruptedError,
+            FFmpegNotFoundError
+        )
+        # Step 1: Check if video file is in request
+        if 'video' not in request.files:
+            return jsonify({
+                "success": False,
+                "error": "No video file provided",
+                "code": "NO_FILE_PROVIDED"
+            }), 400
+
+        video_file = request.files['video']
+
+        if video_file.filename == '':
+            return jsonify({
+                "success": False,
+                "error": "No file selected",
+                "code": "NO_FILE_SELECTED"
+            }), 400
+
+        # Step 2: Get file size
+        video_file.seek(0, 2)  # Seek to end
+        file_size = video_file.tell()
+        video_file.seek(0)  # Reset to beginning
+
+        logger.info(f"Video upload started: {video_file.filename} ({file_size / (1024*1024):.1f} MB)")
+
+        # Step 3: Generate job ID and create temporary path
+        job_id = generate_job_id()
+        current_user = get_current_user()
+        user_id = current_user.get('user_id', 'anonymous') if current_user else 'anonymous'
+
+        # Sanitize filename
+        original_filename = sanitize_filename(video_file.filename)
+        temp_filename = f"{job_id}_{original_filename}"
+        temp_path = os.path.join(Config.TEMP_FOLDER, temp_filename)
+
+        # Step 4: Save to temporary location
+        logger.debug(f"Saving video to temp location: {temp_path}")
+        video_file.save(temp_path)
+
+        # Step 5: Validate file using cloud-first validators (NO FFmpeg)
+        logger.info(f"Validating video (cloud-first): {original_filename}")
+        is_valid, error_message = validate_all_cloud_first(
+            file_size=file_size,
+            filename=original_filename,
+            allowed_formats=Config.VIDEO_ALLOWED_FORMATS,
+            max_size_mb=Config.VIDEO_MAX_SIZE_MB
+        )
+
+        if not is_valid:
+            # Cleanup temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+            logger.warning(f"Video validation failed: {error_message}")
+            return jsonify({
+                "success": False,
+                "error": error_message,
+                "code": "VALIDATION_FAILED"
+            }), 400
+
+        logger.info(f"Cloud-first validation passed: {original_filename}")
+
+        # Step 6: Move to permanent original location
+        permanent_filename = f"{job_id}_{original_filename}"
+        permanent_path = os.path.join(Config.VIDEO_UPLOAD_DIR, permanent_filename)
+
+        import shutil
+        shutil.move(temp_path, permanent_path)
+        logger.info(f"Video moved to permanent storage: {permanent_path}")
+
+        # Step 7: Create VideoJob with placeholder metadata
+        # Metadata will be filled by cloud processing later
+        video_job = VideoJob(
+            job_id=job_id,
+            user_id=user_id,
+            original_filename=original_filename,
+            original_path=permanent_path,
+            original_size_bytes=file_size,
+            original_format=original_filename.rsplit('.', 1)[1].lower() if '.' in original_filename else 'unknown'
+            # Metadata placeholders (cloud will fill these later)
+            # duration_seconds, width, height, fps, codec, bitrate, has_audio use default values (0/False)
+        )
+
+        # Update status to uploaded
+        video_job.update_status(VideoJobStatus.UPLOADED)
+
+        # Step 8: Store VideoJob in memory
+        video_jobs[job_id] = video_job
+
+        logger.info(f"VideoJob created with placeholder metadata: {job_id} (user={user_id})")
+
+        # Step 9: Trigger background cloud processing
+        _trigger_background_transcode(job_id)
+
+        # Step 10: Return success response (without metadata)
+        return jsonify({
+            "success": True,
+            "job_id": job_id,
+            "message": "Video uploaded successfully. Metadata will be extracted by cloud processor.",
+            "data": {
+                "original_filename": original_filename,
+                "file_size_mb": round(video_job.file_size_mb, 2),
+                "status": video_job.status.value,
+                "note": "Video metadata (duration, resolution, codec) will be available after cloud processing"
+            }
+        }), 202  # 202 Accepted - processing pending
+
+    except VideoFileTooLargeError as e:
+        logger.warning(f"Video file too large: {str(e)}")
+        # Cleanup temp file if it exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "code": "FILE_TOO_LARGE",
+            "file_size_mb": e.payload.get('file_size_mb'),
+            "max_size_mb": e.payload.get('max_size_mb')
+        }), 400
+
+    except VideoFormatNotSupportedError as e:
+        logger.warning(f"Video format not supported: {str(e)}")
+        # Cleanup temp file if it exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "code": "INVALID_FORMAT",
+            "format": e.payload.get('format'),
+            "allowed_formats": e.payload.get('allowed_formats')
+        }), 400
+
+    except VideoCorruptedError as e:
+        logger.error(f"Video file corrupted: {str(e)}")
+        # Cleanup temp file if it exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "code": "CORRUPTED_FILE"
+        }), 400
+
+    except FFmpegNotFoundError as e:
+        logger.error(f"FFmpeg not found: {str(e)}")
+        # Cleanup temp file if it exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "code": "FFMPEG_NOT_FOUND"
+        }), 500
+
+    except Exception as e:
+        logger.error(f"Video upload error: {str(e)}", exc_info=True)
+
+        # Cleanup temp file if it exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+
+        # Cleanup permanent file if it exists
+        if 'permanent_path' in locals() and os.path.exists(permanent_path):
+            try:
+                os.remove(permanent_path)
+            except:
+                pass
+
+        return jsonify({
+            "success": False,
+            "error": "An unexpected error occurred during video upload",
+            "code": "INTERNAL_ERROR"
+        }), 500
+
+
+# ============================================================================
+# S3 CHUNKED UPLOAD ENDPOINTS
+# Supports 3GB+ video uploads with resumable chunked upload to S3
+# ============================================================================
+
+@app.route('/upload/init', methods=['POST'])
+@require_auth()
+@require_rate_limit("10 per minute")
+@error_handler
+def init_chunked_upload():
+    """
+    Initialize S3 multipart upload session for large video files.
+
+    Request Body (JSON):
+    {
+        "filename": "my_video.mp4",
+        "file_size": 3221225472,  // 3GB in bytes
+        "chunk_size": 10485760     // 10MB (optional)
+    }
+
+    Response (200 OK):
+    {
+        "success": true,
+        "job_id": "abc-123-def-456",
+        "upload_session": {
+            "upload_id": "s3-multipart-upload-id",
+            "upload_session_id": "abc-123-def-456",
+            "s3_key": "uploads/abc-123/my_video.mp4",
+            "total_chunks": 308,
+            "chunk_urls": [
+                {
+                    "part_number": 1,
+                    "upload_url": "https://s3.amazonaws.com/...",
+                    "chunk_index": 0,
+                    "start_byte": 0,
+                    "end_byte": 10485759,
+                    "size": 10485760
+                },
+                // ... more chunks
+            ],
+            "expires_at": "2025-12-18T12:00:00Z",
+            "chunk_size": 10485760
+        }
+    }
+
+    Error Responses:
+    - 400: Missing required fields
+    - 400: File size exceeds maximum (5GB)
+    - 400: Invalid filename
+    - 401: Unauthorized
+    - 500: S3 initialization failed
+    """
+    try:
+        from services.s3_upload_manager import S3UploadManager
+        from models import VideoJob, VideoJobStatus
+
+        data = request.get_json()
+
+        # Validate request
+        if not data or 'filename' not in data or 'file_size' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields: filename, file_size'
+            }), 400
+
+        filename = sanitize_filename(data['filename'])
+        file_size = int(data['file_size'])
+        chunk_size = int(data.get('chunk_size', 10485760))  # 10MB default
+
+        # Validate file size (max 5GB)
+        max_size = Config.S3_MAX_FILE_SIZE_MB * 1024 * 1024
+        if file_size > max_size:
+            return jsonify({
+                'success': False,
+                'error': f'File size ({file_size / (1024**3):.2f}GB) exceeds maximum ({Config.S3_MAX_FILE_SIZE_MB / 1024:.1f}GB)',
+                'code': 'FILE_TOO_LARGE'
+            }), 400
+
+        # Validate filename extension
+        allowed_exts = Config.ALLOWED_VIDEO_EXTENSIONS
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        if ext not in allowed_exts:
+            return jsonify({
+                'success': False,
+                'error': f'Invalid file extension: .{ext}',
+                'allowed_extensions': list(allowed_exts)
+            }), 400
+
+        # Generate job ID
+        job_id = generate_job_id()
+        current_user = get_current_user()
+        user_id = current_user.get('user_id', 'anonymous') if current_user else 'anonymous'
+
+        # Initialize S3 multipart upload
+        s3_manager = S3UploadManager(redis_client=None)
+        upload_session = s3_manager.initialize_multipart_upload(
+            job_id=job_id,
+            filename=filename,
+            file_size=file_size,
+            chunk_size=chunk_size
+        )
+
+        # Create VideoJob (status: UPLOADING)
+        video_job = VideoJob(
+            job_id=job_id,
+            user_id=user_id,
+            status=VideoJobStatus.UPLOADING,
+            original_filename=filename,
+            original_size_bytes=file_size,
+            metadata={
+                's3_upload_id': upload_session['upload_id'],
+                's3_key': upload_session['s3_key'],
+                'upload_method': 's3_multipart'
+            }
+        )
+
+        # Store VideoJob
+        video_jobs[job_id] = video_job
+
+        logger.info(
+            f"Chunked upload initialized: job={job_id}, "
+            f"size={file_size / (1024**3):.2f}GB, chunks={upload_session['total_chunks']}"
+        )
+
+        return jsonify({
+            'success': True,
+            'job_id': job_id,
+            'upload_session': upload_session
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Failed to initialize chunked upload: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'Failed to initialize upload',
+            'code': 'INIT_FAILED'
+        }), 500
+
+
+@app.route('/upload/chunk-complete', methods=['POST'])
+@require_auth()
+@require_rate_limit("100 per minute")  # High rate limit for chunk notifications
+@error_handler
+def chunk_upload_complete():
+    """
+    Notify backend that a chunk has been successfully uploaded to S3.
+
+    Request Body (JSON):
+    {
+        "job_id": "abc-123-def-456",
+        "part_number": 1,
+        "etag": "s3-etag-value"
+    }
+
+    Response (200 OK):
+    {
+        "success": true,
+        "progress": {
+            "completed_chunks": [1, 2, 3],
+            "total_chunks": 308,
+            "progress": 0.0097,  // 0.97%
+            "is_complete": false
+        }
+    }
+    """
+    try:
+        from services.s3_upload_manager import S3UploadManager
+
+        data = request.get_json()
+
+        if not data or 'job_id' not in data or 'part_number' not in data or 'etag' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields: job_id, part_number, etag'
+            }), 400
+
+        job_id = data['job_id']
+        part_number = int(data['part_number'])
+        etag = data['etag']
+
+        # Mark chunk as complete
+        s3_manager = S3UploadManager(redis_client=None)
+        progress_data = s3_manager.mark_chunk_complete(
+            job_id=job_id,
+            part_number=part_number,
+            etag=etag
+        )
+
+        # Update VideoJob progress
+        if job_id in video_jobs:
+            video_job = video_jobs[job_id]
+            video_job.transcode_progress = progress_data['progress']
+            video_job.updated_at = datetime.now()
+
+        return jsonify({
+            'success': True,
+            'progress': progress_data
+        }), 200
+
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 404
+    except Exception as e:
+        logger.error(f"Failed to mark chunk complete: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'Failed to update chunk status'
+        }), 500
+
+
+@app.route('/upload/complete', methods=['POST'])
+@require_auth()
+@require_rate_limit("10 per minute")
+@error_handler
+def complete_chunked_upload():
+    """
+    Finalize S3 multipart upload after all chunks are uploaded.
+
+    Request Body (JSON):
+    {
+        "job_id": "abc-123-def-456"
+    }
+
+    Response (200 OK):
+    {
+        "success": true,
+        "job_id": "abc-123-def-456",
+        "s3_url": "s3://bucket/uploads/abc-123/video.mp4",
+        "message": "Upload completed successfully"
+    }
+
+    Response (202 Accepted):
+    {
+        "success": true,
+        "job_id": "abc-123-def-456",
+        "message": "Upload finalized, transcoding started"
+    }
+    """
+    try:
+        from services.s3_upload_manager import S3UploadManager
+        from models import VideoJobStatus
+
+        data = request.get_json()
+
+        if not data or 'job_id' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required field: job_id'
+            }), 400
+
+        job_id = data['job_id']
+
+        # Complete multipart upload
+        s3_manager = S3UploadManager(redis_client=None)
+        s3_url = s3_manager.complete_multipart_upload(job_id)
+
+        # Update VideoJob
+        if job_id in video_jobs:
+            video_job = video_jobs[job_id]
+            video_job.update_status(VideoJobStatus.UPLOADED)
+            video_job.original_path = s3_url  # Store S3 URL
+            video_job.transcode_progress = 1.0
+
+            # Trigger background transcoding (cloud-based)
+            _trigger_background_transcode(job_id)
+
+            logger.info(f"Upload completed, transcoding started: job={job_id}")
+
+            return jsonify({
+                'success': True,
+                'job_id': job_id,
+                'message': 'Upload finalized, transcoding started'
+            }), 202
+        else:
+            logger.warning(f"VideoJob not found after upload: {job_id}")
+            return jsonify({
+                'success': True,
+                'job_id': job_id,
+                's3_url': s3_url,
+                'message': 'Upload completed successfully'
+            }), 200
+
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+    except Exception as e:
+        logger.error(f"Failed to complete upload: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'Failed to finalize upload'
+        }), 500
+
+
+@app.route('/upload/resume', methods=['POST'])
+@require_auth()
+@require_rate_limit("20 per minute")
+@error_handler
+def resume_chunked_upload():
+    """
+    Get upload session status to resume interrupted uploads.
+
+    Request Body (JSON):
+    {
+        "job_id": "abc-123-def-456"
+    }
+
+    Response (200 OK):
+    {
+        "success": true,
+        "job_id": "abc-123-def-456",
+        "session": {
+            "upload_id": "s3-multipart-upload-id",
+            "s3_key": "uploads/abc-123/video.mp4",
+            "total_chunks": 308,
+            "completed_chunks": [1, 2, 3, 5, 6],  // Missing chunk 4
+            "missing_chunks": [4, 7, 8, ..., 308],
+            "progress": 0.016,  // 1.6%
+            "status": "uploading"
+        }
+    }
+
+    Response (404 Not Found):
+    {
+        "success": false,
+        "error": "Upload session not found"
+    }
+    """
+    try:
+        from services.s3_upload_manager import S3UploadManager
+
+        data = request.get_json()
+
+        if not data or 'job_id' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required field: job_id'
+            }), 400
+
+        job_id = data['job_id']
+
+        # Get upload session
+        s3_manager = S3UploadManager(redis_client=None)
+        session = s3_manager.get_upload_status(job_id)
+
+        if not session:
+            return jsonify({
+                'success': False,
+                'error': 'Upload session not found'
+            }), 404
+
+        # Calculate missing chunks
+        all_chunks = set(range(1, session['total_chunks'] + 1))
+        completed = set(session['completed_chunks'])
+        missing = sorted(list(all_chunks - completed))
+
+        progress = len(completed) / session['total_chunks']
+
+        return jsonify({
+            'success': True,
+            'job_id': job_id,
+            'session': {
+                'upload_id': session['upload_id'],
+                's3_key': session['s3_key'],
+                'total_chunks': session['total_chunks'],
+                'completed_chunks': session['completed_chunks'],
+                'missing_chunks': missing,
+                'progress': progress,
+                'status': session['status']
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Failed to get resume info: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'Failed to retrieve upload status'
+        }), 500
+
+
+@app.route('/upload/abort', methods=['POST'])
+@require_auth()
+@require_rate_limit("10 per minute")
+@error_handler
+def abort_chunked_upload():
+    """
+    Abort and cleanup an incomplete multipart upload.
+
+    Request Body (JSON):
+    {
+        "job_id": "abc-123-def-456"
+    }
+
+    Response (200 OK):
+    {
+        "success": true,
+        "message": "Upload aborted and cleaned up"
+    }
+    """
+    try:
+        from services.s3_upload_manager import S3UploadManager
+        from models import VideoJobStatus
+
+        data = request.get_json()
+
+        if not data or 'job_id' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required field: job_id'
+            }), 400
+
+        job_id = data['job_id']
+
+        # Abort upload
+        s3_manager = S3UploadManager(redis_client=None)
+        success = s3_manager.abort_multipart_upload(job_id)
+
+        # Update VideoJob status
+        if job_id in video_jobs:
+            video_job = video_jobs[job_id]
+            video_job.update_status(VideoJobStatus.CANCELLED)
+            video_job.error_message = "Upload cancelled by user"
+
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Upload aborted and cleaned up'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to abort upload'
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Failed to abort upload: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'Failed to abort upload'
+        }), 500
+
+
+@app.route('/video-status/<job_id>', methods=['GET'])
+@require_auth()
+@require_rate_limit("60 per minute")
+@error_handler
+def get_video_status(job_id: str):
+    """
+    Get the status of a video processing job.
+
+    This endpoint returns detailed information about a video job including:
+    - Current processing status (uploaded, transcoding, ready, failed)
+    - Original video metadata (duration, resolution, codec, etc.)
+    - Transcoding progress and time estimates
+    - Proxy video availability and URL
+
+    Path Parameters:
+        job_id: UUID of the video processing job
+
+    Response (Success - 200 OK):
+        {
+            "success": true,
+            "job_id": "uuid",
+            "status": "transcoding",  # uploaded, transcoding, ready, failed
+            "original_metadata": {
+                "filename": "video.mp4",
+                "size_bytes": 2987654321,
+                "size_mb": 2847.5,
+                "format": "mp4",
+                "duration_seconds": 3600.5,
+                "resolution": "1920x1080",
+                "width": 1920,
+                "height": 1080,
+                "fps": 30.0,
+                "codec": "h264",
+                "bitrate": 5000000,
+                "has_audio": true
+            },
+            "transcode_progress": 0.65,  # 0.0 to 1.0
+            "transcode_progress_percent": 65,  # 0 to 100
+            "estimated_time_remaining": 120,  # seconds, null if not transcoding
+            "estimated_transcode_time_seconds": 240,  # total estimated time
+            "elapsed_transcode_time_seconds": 156,  # elapsed time, null if not started
+            "proxy_ready": false,
+            "proxy_url": null,  # URL when ready
+            "proxy_size_mb": null,  # size when ready
+            "transcode_started_at": "2025-12-15T10:30:00Z",  # ISO 8601
+            "transcode_completed_at": null,  # ISO 8601 when complete
+            "transcode_error": null,  # error message if failed
+            "created_at": "2025-12-15T10:25:00Z",
+            "updated_at": "2025-12-15T10:30:45Z"
+        }
+
+    Response (Job Not Found - 404):
+        {
+            "success": false,
+            "error": "Video job not found: <job_id>",
+            "code": "JOB_NOT_FOUND",
+            "job_id": "<job_id>"
+        }
+
+    Response (Invalid Job ID - 400):
+        {
+            "success": false,
+            "error": "Job ID contains invalid characters",
+            "status_code": 400
+        }
+    """
+    from models import VideoJob, VideoJobStatus
+    from utils.error_handlers import VideoJobNotFoundError
+
+    try:
+        # Step 1: Validate job_id
+        job_id = validate_job_id(job_id)
+
+        # Step 2: Look up VideoJob in memory
+        if job_id not in video_jobs:
+            raise VideoJobNotFoundError(job_id)
+
+        video_job = video_jobs[job_id]
+
+        # Step 3: Check if metadata exists (should always exist after upload)
+        if not video_job.original_filename:
+            logger.error(f"VideoJob {job_id} missing required metadata")
+            return jsonify({
+                "success": False,
+                "error": f"Video job {job_id} is missing required metadata",
+                "code": "MISSING_METADATA",
+                "job_id": job_id
+            }), 500
+
+        # Step 4: Build response using VideoJob.to_dict()
+        job_dict = video_job.to_dict()
+
+        # Step 5: Structure response with organized sections
+        response = {
+            "success": True,
+            "job_id": job_dict['job_id'],
+            "user_id": job_dict['user_id'],
+            "status": job_dict['status'],
+
+            # Original metadata section
+            "original_metadata": {
+                "filename": job_dict['original_filename'],
+                "size_bytes": job_dict['original_size_bytes'],
+                "size_mb": job_dict['file_size_mb'],
+                "format": job_dict['original_format'],
+                "duration_seconds": job_dict['duration_seconds'],
+                "resolution": job_dict['resolution'],
+                "width": job_dict['width'],
+                "height": job_dict['height'],
+                "fps": job_dict['fps'],
+                "codec": job_dict['codec'],
+                "bitrate": job_dict['bitrate'],
+                "has_audio": job_dict['has_audio']
+            },
+
+            # Transcoding progress section
+            "transcode_progress": job_dict['transcode_progress'],
+            "transcode_progress_percent": job_dict['transcode_progress_percent'],
+            "estimated_time_remaining": job_dict['estimated_time_remaining_seconds'],
+            "estimated_transcode_time_seconds": job_dict['estimated_transcode_time_seconds'],
+            "elapsed_transcode_time_seconds": job_dict['elapsed_transcode_time_seconds'],
+
+            # Proxy section
+            "proxy_ready": job_dict['proxy_ready'],
+            "proxy_url": job_dict['proxy_url'],
+            "proxy_size_mb": job_dict['proxy_size_mb'],
+
+            # Timestamps section
+            "transcode_started_at": job_dict['transcode_started_at'],
+            "transcode_completed_at": job_dict['transcode_completed_at'],
+            "transcode_error": job_dict['transcode_error'],
+            "created_at": job_dict['created_at'],
+            "updated_at": job_dict['updated_at'],
+
+            # Additional metadata
+            "metadata": job_dict['metadata']
+        }
+
+        logger.debug(f"Video status retrieved for job {job_id}: {video_job.status.value}")
+        return jsonify(response), 200
+
+    except VideoJobNotFoundError as e:
+        logger.warning(f"Video job not found: {job_id}")
+        return jsonify({
+            "success": False,
+            "error": e.message,
+            "code": "JOB_NOT_FOUND",
+            "job_id": job_id
+        }), 404
+
+    except ValidationError as e:
+        logger.warning(f"Invalid job_id: {job_id}")
+        return jsonify(e.to_dict()), 400
+
+    except Exception as e:
+        logger.error(f"Error retrieving video status for {job_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": "An unexpected error occurred while retrieving video status",
+            "code": "INTERNAL_ERROR",
+            "job_id": job_id
+        }), 500
+
+
+@app.route('/video-proxy/<job_id>', methods=['GET'])
+@require_auth()
+@require_rate_limit("120 per minute")
+@error_handler
+def stream_video_proxy(job_id: str):
+    """
+    Stream the web-optimized proxy video file with HTTP Range support.
+
+    This endpoint serves the transcoded proxy video file for browser playback.
+    It supports HTTP Range requests (RFC 7233) to enable video seeking and
+    efficient streaming.
+
+    Features:
+    - HTTP Range request support (206 Partial Content)
+    - Efficient chunked streaming
+    - Proper MIME type detection
+    - Browser-compatible headers (Accept-Ranges, Content-Range, Content-Length)
+    - Authentication and rate limiting
+
+    Path Parameters:
+        job_id: UUID of the video processing job
+
+    Request Headers (Optional):
+        Range: bytes=<start>-<end>  # For partial content requests
+
+    Response (Success - 200 OK / 206 Partial Content):
+        Headers:
+            Content-Type: video/mp4
+            Accept-Ranges: bytes
+            Content-Length: <file_size>
+            Content-Range: bytes <start>-<end>/<total>  # Only for 206
+            Cache-Control: public, max-age=3600
+        Body:
+            <video binary data>
+
+    Response (Proxy Not Ready - 425 Too Early):
+        {
+            "success": false,
+            "error": "Proxy video is not ready yet. Current status: transcoding",
+            "code": "PROXY_NOT_READY",
+            "job_id": "<job_id>",
+            "status": "transcoding",
+            "progress_percent": 65
+        }
+
+    Response (Job Not Found - 404):
+        {
+            "success": false,
+            "error": "Video job not found: <job_id>",
+            "code": "JOB_NOT_FOUND",
+            "job_id": "<job_id>"
+        }
+
+    Response (Proxy File Not Found - 404):
+        {
+            "success": false,
+            "error": "Proxy file not found on disk",
+            "code": "PROXY_FILE_NOT_FOUND",
+            "job_id": "<job_id>"
+        }
+
+    Response (Invalid Range - 416):
+        {
+            "success": false,
+            "error": "Requested range not satisfiable",
+            "code": "INVALID_RANGE"
+        }
+    """
+    from models import VideoJob, VideoJobStatus
+    from utils.error_handlers import VideoJobNotFoundError
+    from flask import Response, make_response
+    import mimetypes
+
+    try:
+        # Step 1: Validate job_id
+        job_id = validate_job_id(job_id)
+
+        # Step 2: Look up VideoJob in memory
+        if job_id not in video_jobs:
+            raise VideoJobNotFoundError(job_id)
+
+        video_job = video_jobs[job_id]
+
+        # Step 3: Check if proxy is ready
+        if not video_job.proxy_ready:
+            logger.warning(f"Proxy not ready for job {job_id}, status: {video_job.status.value}")
+            return jsonify({
+                "success": False,
+                "error": f"Proxy video is not ready yet. Current status: {video_job.status.value}",
+                "code": "PROXY_NOT_READY",
+                "job_id": job_id,
+                "status": video_job.status.value,
+                "progress_percent": video_job.transcode_progress_percent
+            }), 425  # 425 Too Early - resource not yet available
+
+        # Step 4: Check if proxy file exists on disk
+        if not video_job.proxy_path or not os.path.exists(video_job.proxy_path):
+            logger.error(f"Proxy file missing for job {job_id}: {video_job.proxy_path}")
+            return jsonify({
+                "success": False,
+                "error": "Proxy file not found on disk",
+                "code": "PROXY_FILE_NOT_FOUND",
+                "job_id": job_id
+            }), 404
+
+        proxy_path = video_job.proxy_path
+        file_size = os.path.getsize(proxy_path)
+
+        # Step 5: Detect MIME type
+        mime_type, _ = mimetypes.guess_type(proxy_path)
+        if not mime_type:
+            # Default to MP4 for proxy videos
+            mime_type = 'video/mp4'
+
+        # Step 6: Parse Range header (if present)
+        range_header = request.headers.get('Range', None)
+
+        if range_header:
+            # Parse Range: bytes=start-end
+            try:
+                # Extract byte range
+                range_match = range_header.replace('bytes=', '').strip()
+                ranges = range_match.split('-')
+
+                # Parse start and end
+                start = int(ranges[0]) if ranges[0] else 0
+                end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else file_size - 1
+
+                # Validate range
+                if start >= file_size or start < 0 or end >= file_size or start > end:
+                    logger.warning(f"Invalid range request for job {job_id}: {range_header}")
+                    return jsonify({
+                        "success": False,
+                        "error": "Requested range not satisfiable",
+                        "code": "INVALID_RANGE"
+                    }), 416  # 416 Range Not Satisfiable
+
+                # Calculate content length
+                content_length = end - start + 1
+
+                # Step 7: Stream partial content (206 Partial Content)
+                def generate_partial():
+                    """Generator for streaming partial content"""
+                    with open(proxy_path, 'rb') as video_file:
+                        video_file.seek(start)
+                        remaining = content_length
+                        chunk_size = 8192  # 8KB chunks
+
+                        while remaining > 0:
+                            chunk = video_file.read(min(chunk_size, remaining))
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                            yield chunk
+
+                response = Response(generate_partial(), status=206, mimetype=mime_type)
+                response.headers['Content-Range'] = f'bytes {start}-{end}/{file_size}'
+                response.headers['Content-Length'] = str(content_length)
+                response.headers['Accept-Ranges'] = 'bytes'
+                response.headers['Cache-Control'] = 'public, max-age=3600'
+
+                logger.debug(f"Streaming partial content for job {job_id}: bytes {start}-{end}/{file_size}")
+                return response
+
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Malformed range header for job {job_id}: {range_header}")
+                return jsonify({
+                    "success": False,
+                    "error": "Malformed range header",
+                    "code": "INVALID_RANGE"
+                }), 416
+
+        # Step 8: Stream full content (200 OK)
+        def generate_full():
+            """Generator for streaming full content"""
+            with open(proxy_path, 'rb') as video_file:
+                chunk_size = 8192  # 8KB chunks
+                while True:
+                    chunk = video_file.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        response = Response(generate_full(), status=200, mimetype=mime_type)
+        response.headers['Content-Length'] = str(file_size)
+        response.headers['Accept-Ranges'] = 'bytes'
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+
+        logger.info(f"Streaming full video proxy for job {job_id} ({file_size} bytes)")
+        return response
+
+    except VideoJobNotFoundError as e:
+        logger.warning(f"Video job not found for streaming: {job_id}")
+        return jsonify({
+            "success": False,
+            "error": e.message,
+            "code": "JOB_NOT_FOUND",
+            "job_id": job_id
+        }), 404
+
+    except ValidationError as e:
+        logger.warning(f"Invalid job_id for streaming: {job_id}")
+        return jsonify(e.to_dict()), 400
+
+    except Exception as e:
+        logger.error(f"Error streaming video proxy for {job_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": "An unexpected error occurred while streaming video",
+            "code": "INTERNAL_ERROR",
+            "job_id": job_id
+        }), 500
+
+
+# ==========================================
+# WAVEFORM API (Phase 2.2.1)
+# ==========================================
+
+@app.route('/waveform/<job_id>', methods=['GET'])
+@require_auth()
+@require_rate_limit("60 per minute")
+@error_handler
+def get_waveform(job_id: str):
+    """
+    Get waveform peak data for timeline visualization.
+
+    This endpoint returns waveform peak data extracted from the video's audio track.
+    The waveform is generated on first request (lazy generation) and cached for
+    subsequent requests.
+
+    Features:
+    - Lazy generation (generate on first request)
+    - Disk caching (fast subsequent requests)
+    - ~1500 peak samples (optimized for timeline rendering)
+    - Normalized peak values [0, 1]
+    - Authentication and rate limiting
+
+    Path Parameters:
+        job_id: UUID of the video processing job
+
+    Response (Success - 200 OK):
+        {
+            "job_id": "abc-123",
+            "peaks": [0.0, 0.12, 0.34, ...],  // ~1500 samples
+            "sample_rate": 44100,
+            "duration": 300.5,
+            "channels": 1,
+            "samples": 1500,
+            "created_at": "2025-12-16T10:30:00Z"
+        }
+
+    Response (Waveform Generating - 425 Too Early):
+        {
+            "success": false,
+            "error": "Waveform is being generated. Please try again shortly.",
+            "code": "WAVEFORM_GENERATING",
+            "job_id": "abc-123",
+            "status": "generating"
+        }
+
+    Response (Proxy Not Ready - 425 Too Early):
+        {
+            "success": false,
+            "error": "Proxy video must be ready before generating waveform",
+            "code": "PROXY_NOT_READY",
+            "job_id": "abc-123",
+            "proxy_status": "transcoding",
+            "progress_percent": 65
+        }
+
+    Response (Job Not Found - 404):
+        {
+            "success": false,
+            "error": "Video job not found: abc-123",
+            "code": "JOB_NOT_FOUND",
+            "job_id": "abc-123"
+        }
+
+    Response (Waveform Generation Failed - 500):
+        {
+            "success": false,
+            "error": "Waveform generation failed: No audio stream found",
+            "code": "WAVEFORM_GENERATION_FAILED",
+            "job_id": "abc-123"
+        }
+    """
+    from models import VideoJob, VideoJobStatus
+    from utils.error_handlers import VideoJobNotFoundError
+    from services.waveform_generator import generate_waveform, load_waveform_cache
+
+    try:
+        # Step 1: Validate job_id
+        job_id = validate_job_id(job_id)
+
+        # Step 2: Look up VideoJob in memory
+        if job_id not in video_jobs:
+            raise VideoJobNotFoundError(job_id)
+
+        video_job = video_jobs[job_id]
+
+        # Step 3: Check if proxy is ready (waveform requires proxy video)
+        if not video_job.proxy_ready:
+            logger.warning(f"Proxy not ready for waveform generation: job {job_id}, status: {video_job.status.value}")
+            return jsonify({
+                "success": False,
+                "error": "Proxy video must be ready before generating waveform",
+                "code": "PROXY_NOT_READY",
+                "job_id": job_id,
+                "proxy_status": video_job.status.value,
+                "progress_percent": video_job.transcode_progress_percent
+            }), 425  # 425 Too Early
+
+        # Step 4: Check waveform status
+        if video_job.waveform_status == 'generating':
+            logger.info(f"Waveform is currently being generated for job {job_id}")
+            return jsonify({
+                "success": False,
+                "error": "Waveform is being generated. Please try again shortly.",
+                "code": "WAVEFORM_GENERATING",
+                "job_id": job_id,
+                "status": "generating"
+            }), 425  # 425 Too Early
+
+        if video_job.waveform_status == 'failed':
+            logger.error(f"Waveform generation previously failed for job {job_id}: {video_job.waveform_error}")
+            return jsonify({
+                "success": False,
+                "error": f"Waveform generation failed: {video_job.waveform_error}",
+                "code": "WAVEFORM_GENERATION_FAILED",
+                "job_id": job_id
+            }), 500
+
+        # Step 5: Check if waveform is already cached
+        if video_job.waveform_status == 'ready' and video_job.waveform_file:
+            # Load cached waveform
+            cached_waveform = load_waveform_cache(job_id)
+            if cached_waveform:
+                logger.info(f"Serving cached waveform for job {job_id}")
+                return jsonify(cached_waveform.to_dict()), 200
+            else:
+                logger.warning(f"Waveform status is 'ready' but cache file is missing for job {job_id}")
+                # Fall through to regenerate
+
+        # Step 6: Generate waveform (first request or cache miss)
+        logger.info(f"Generating waveform for job {job_id}")
+        video_job.mark_waveform_generating()
+
+        try:
+            # Generate waveform from proxy video
+            waveform_data = generate_waveform(
+                video_path=video_job.proxy_path,
+                job_id=job_id,
+                samples=video_job.waveform_samples
+            )
+
+            # Mark as ready
+            video_job.mark_waveform_ready(
+                waveform_file=waveform_data.to_dict().get('created_at', ''),  # Use timestamp as identifier
+                duration=waveform_data.duration
+            )
+
+            logger.info(f"Waveform generated successfully for job {job_id}: {waveform_data.samples} samples, {waveform_data.duration:.2f}s")
+
+            return jsonify(waveform_data.to_dict()), 200
+
+        except ValueError as e:
+            # Video has no audio stream
+            error_msg = str(e)
+            video_job.mark_waveform_failed(error_msg)
+            logger.error(f"Waveform generation failed for job {job_id}: {error_msg}")
+            return jsonify({
+                "success": False,
+                "error": f"Waveform generation failed: {error_msg}",
+                "code": "WAVEFORM_GENERATION_FAILED",
+                "job_id": job_id
+            }), 500
+
+        except Exception as e:
+            # Unexpected error
+            error_msg = f"Unexpected error during waveform generation: {str(e)}"
+            video_job.mark_waveform_failed(error_msg)
+            logger.error(f"Waveform generation failed for job {job_id}: {error_msg}", exc_info=True)
+            return jsonify({
+                "success": False,
+                "error": "Waveform generation failed due to an internal error",
+                "code": "WAVEFORM_GENERATION_FAILED",
+                "job_id": job_id
+            }), 500
+
+    except VideoJobNotFoundError as e:
+        logger.warning(f"Video job not found for waveform request: {job_id}")
+        return jsonify({
+            "success": False,
+            "error": e.message,
+            "code": "JOB_NOT_FOUND",
+            "job_id": job_id
+        }), 404
+
+    except ValidationError as e:
+        logger.warning(f"Invalid job_id for waveform request: {job_id}")
+        return jsonify(e.to_dict()), 400
+
+    except Exception as e:
+        logger.error(f"Error retrieving waveform for {job_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": "An unexpected error occurred while retrieving waveform",
+            "code": "INTERNAL_ERROR",
+            "job_id": job_id
+        }), 500
+
+
+# ==========================================
+# ERROR HANDLERS
+# ==========================================
 
 @app.errorhandler(413)
 def too_large(e):

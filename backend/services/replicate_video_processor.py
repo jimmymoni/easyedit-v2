@@ -1,16 +1,22 @@
 """
 Replicate Video Processor - Zero-Install Video Processing via Cloud APIs
 
-This service replaces all local FFmpeg operations with Replicate cloud APIs,
-enabling zero-install deployment and GPU-accelerated processing.
+This service provides cloud-based video processing with optional AWS MediaConvert integration.
 
-Operations:
-- Video transcoding to web-optimized H.264/AAC MP4
-- Audio extraction for Whisper transcription
-- Video concatenation for repeated take removal
-- Metadata extraction from Replicate responses
+Core Features (Always Available):
+- Audio extraction for Whisper transcription (Replicate)
+- Video concatenation for repeated take removal (Replicate)
+- Speech-to-text transcription with speaker diarization (Replicate Whisper)
 
-Cost: ~$0.45 per 3GB video (6x faster than local FFmpeg)
+Optional Features (Requires AWS MediaConvert):
+- Video transcoding to web-optimized H.264/AAC MP4 (AWS MediaConvert)
+- Proxy video generation for editing (AWS MediaConvert)
+
+The processor works in two modes:
+1. Replicate-only: Audio extraction + Whisper (works immediately, no AWS setup)
+2. Hybrid: AWS MediaConvert transcoding + Replicate utilities (requires AWS setup)
+
+Cost: ~$0.10 per 3GB video (Replicate-only) or ~$1.00 (with transcoding)
 """
 
 import replicate
@@ -27,9 +33,18 @@ logger = logging.getLogger(__name__)
 
 class ReplicateVideoProcessor:
     """
-    Hybrid cloud video processor using AWS + Replicate APIs.
-    - AWS MediaConvert for video transcoding (production-grade)
-    - Replicate for audio extraction, merging, trimming (cost-effective utilities)
+    Flexible cloud video processor with optional AWS MediaConvert integration.
+
+    Core Mode (Replicate-only):
+    - Audio extraction for Whisper transcription
+    - Speech-to-text with speaker diarization
+    - Video concatenation and trimming
+    - Works immediately without AWS setup
+
+    Extended Mode (AWS MediaConvert + Replicate):
+    - All core features PLUS production-grade video transcoding
+    - Requires AWS MediaConvert activation (may take 1-24 hours)
+    - Optional for most workflows
     """
 
     def __init__(self):
@@ -55,10 +70,19 @@ class ReplicateVideoProcessor:
         self.audio_extract_model = Config.REPLICATE_AUDIO_MODEL or "lucataco/extract-audio"
         self.video_merge_model = Config.REPLICATE_VIDEO_MODEL_MERGE or "foixasoftware/ffmpeg"
 
-        # Initialize AWS MediaConvert for video transcoding
-        self.mediaconvert = AWSMediaConvertService()
-
-        logger.info("Hybrid cloud processor initialized (AWS MediaConvert + Replicate)")
+        # Initialize AWS MediaConvert for video transcoding (OPTIONAL)
+        self.mediaconvert = None
+        self.mediaconvert_available = False
+        try:
+            if Config.AWS_MEDIACONVERT_ROLE_ARN:
+                self.mediaconvert = AWSMediaConvertService()
+                self.mediaconvert_available = True
+                logger.info("Hybrid cloud processor initialized (AWS MediaConvert + Replicate)")
+            else:
+                logger.info("Replicate-only processor initialized (AWS MediaConvert disabled - no role ARN)")
+        except Exception as e:
+            logger.warning(f"AWS MediaConvert unavailable: {e}")
+            logger.info("Falling back to Replicate-only mode (audio extraction + Whisper transcription)")
 
     def transcode_video(
         self,
@@ -101,8 +125,18 @@ class ReplicateVideoProcessor:
 
         Raises:
             ValueError: If video_url is not an S3 URL
+            RuntimeError: If AWS MediaConvert is not available
             Exception: If AWS MediaConvert API fails
         """
+        # Check if MediaConvert is available
+        if not self.mediaconvert_available:
+            raise RuntimeError(
+                "AWS MediaConvert is not available. "
+                "Either AWS_MEDIACONVERT_ROLE_ARN is not configured, "
+                "or the service failed to initialize (check logs). "
+                "You can still use audio extraction and Whisper transcription without transcoding."
+            )
+
         try:
             logger.info(f"Starting AWS MediaConvert transcode: {video_url}")
             logger.info(f"Target: {max_width}x{max_height}, preset={preset}")
@@ -215,8 +249,9 @@ class ReplicateVideoProcessor:
 
             logger.info("Starting Replicate audio extraction...")
 
+            # Don't use :latest tag - let Replicate API handle version resolution
             output = replicate.run(
-                f"{self.audio_extract_model}:latest",
+                self.audio_extract_model,
                 input=input_params
             )
 
@@ -280,8 +315,9 @@ class ReplicateVideoProcessor:
 
             logger.info("Starting video concatenation...")
 
+            # Don't use :latest tag - let Replicate API handle version resolution
             output = replicate.run(
-                f"{self.video_merge_model}:latest",
+                self.video_merge_model,
                 input=input_params
             )
 

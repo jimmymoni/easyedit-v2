@@ -1,14 +1,14 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import MainPage from './pages/MainPage';
-import GodModePage from './pages/GodModePage';
+import VideoEditorPage from './pages/VideoEditorPage';
+import VideoTestPage from './pages/VideoTestPage';
 
 function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<MainPage />} />
-        <Route path="/godmode/:jobId" element={<GodModePage />} />
+        <Route path="/" element={<VideoEditorPage />} />
+        <Route path="/video-test/:jobId" element={<VideoTestPage />} />
       </Routes>
     </Router>
   );

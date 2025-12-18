@@ -1,11 +1,12 @@
 """
 Video Audio Extractor Service
-Extracts audio track from video files using FFmpeg for transcription
+Extracts audio track from video files using FFmpeg or Replicate cloud models
 """
 import logging
 import os
 import subprocess
 import json
+import requests
 from typing import Dict, Any, Optional
 from config import Config
 
@@ -13,14 +14,35 @@ logger = logging.getLogger(__name__)
 
 
 class VideoAudioExtractor:
-    """Extract audio from video files using FFmpeg"""
+    """Extract audio from video files using FFmpeg or Replicate cloud models"""
 
     def __init__(self):
         self.supported_video_formats = ['.mp4', '.mov', '.avi', '.mkv', '.m4v']
-        self._check_ffmpeg()
+        self.use_cloud = Config.USE_CLOUD_VIDEO_PROCESSING
 
-    def _check_ffmpeg(self):
-        """Check if ffmpeg and ffprobe are available"""
+        # Only check FFmpeg if not using cloud processing or as fallback
+        if not self.use_cloud:
+            self._check_ffmpeg()
+        else:
+            logger.info("Cloud video processing enabled - FFmpeg not required")
+            # Initialize Replicate client if using cloud mode
+            try:
+                from services.replicate_video_client import ReplicateVideoClient
+                self.replicate_client = ReplicateVideoClient()
+                logger.info("Replicate video client initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Replicate client, falling back to local FFmpeg: {e}")
+                self.use_cloud = False
+                self._check_ffmpeg()
+
+    def _check_ffmpeg(self, raise_on_error=True):
+        """
+        Check if ffmpeg and ffprobe are available
+
+        Args:
+            raise_on_error: If True, raise RuntimeError when FFmpeg is missing.
+                          If False, just log a warning.
+        """
         try:
             subprocess.run(
                 ['ffmpeg', '-version'],
@@ -38,7 +60,7 @@ class VideoAudioExtractor:
             )
             logger.info("FFmpeg and ffprobe are available for video processing")
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-            logger.error(f"FFmpeg/ffprobe not available: {e}. Video processing will fail.")
+            error_msg = f"FFmpeg/ffprobe not available: {e}"
 
             # Get platform-specific installation instructions
             import platform
@@ -50,10 +72,16 @@ class VideoAudioExtractor:
             else:
                 install_msg = "Install with: sudo apt-get install ffmpeg (or your package manager)"
 
-            raise RuntimeError(
+            full_error_msg = (
                 f"FFmpeg is required for video processing. {install_msg}. "
                 f"For detailed instructions, visit the Video Editor page."
             )
+
+            if raise_on_error:
+                logger.error(f"{error_msg} Video processing will fail.")
+                raise RuntimeError(full_error_msg)
+            else:
+                logger.warning(f"{error_msg} Cloud processing mode is active - FFmpeg not required for upload.")
 
     def extract_audio(
         self,
@@ -81,6 +109,29 @@ class VideoAudioExtractor:
                     'codec': str
                 }
             }
+        """
+        # Route to cloud or local extraction
+        if self.use_cloud:
+            return self._extract_audio_cloud(video_path, output_audio_path, sample_rate)
+        else:
+            return self._extract_audio_local(video_path, output_audio_path, sample_rate)
+
+    def _extract_audio_local(
+        self,
+        video_path: str,
+        output_audio_path: str,
+        sample_rate: int = None
+    ) -> Dict[str, Any]:
+        """
+        Extract audio using local FFmpeg
+
+        Args:
+            video_path: Path to the input video file
+            output_audio_path: Where to save the extracted audio (WAV format)
+            sample_rate: Audio sample rate (default: from config, 16kHz for speech)
+
+        Returns:
+            Dict with success, audio_path, duration, video_info
         """
         try:
             # Validate input
@@ -165,9 +216,41 @@ class VideoAudioExtractor:
             logger.error(f"Unexpected error during audio extraction: {str(e)}")
             return {'success': False, 'error': str(e)}
 
+    def _extract_audio_cloud(
+        self,
+        video_path: str,
+        output_audio_path: str,
+        sample_rate: int = None
+    ) -> Dict[str, Any]:
+        """
+        Extract audio using Replicate cloud models
+
+        NOTE: Currently uses a workaround since Replicate doesn't have a dedicated
+        audio extraction model. For MVP, fall back to local FFmpeg for audio extraction.
+        Cloud processing is more beneficial for video cutting/encoding (CPU-intensive).
+
+        Args:
+            video_path: Path to the input video file
+            output_audio_path: Where to save the extracted audio (WAV format)
+            sample_rate: Audio sample rate (default: from config, 16kHz for speech)
+
+        Returns:
+            Dict with success, audio_path, duration, video_info
+        """
+        try:
+            logger.info("Cloud audio extraction - falling back to local FFmpeg (audio extraction is fast)")
+            # Audio extraction is lightweight and fast with FFmpeg
+            # No benefit from cloud processing for this operation
+            return self._extract_audio_local(video_path, output_audio_path, sample_rate)
+
+        except Exception as e:
+            logger.error(f"Cloud audio extraction failed: {e}")
+            logger.info("Falling back to local FFmpeg for audio extraction")
+            return self._extract_audio_local(video_path, output_audio_path, sample_rate)
+
     def get_video_info(self, video_path: str) -> Dict[str, Any]:
         """
-        Get video metadata using ffprobe
+        Get video metadata using ffprobe (local) or basic file info (cloud mode)
 
         Args:
             video_path: Path to the video file
@@ -184,6 +267,38 @@ class VideoAudioExtractor:
                 'audio_codec': str (optional)
             }
         """
+        # In cloud mode, return basic metadata without FFmpeg
+        # Actual metadata will be extracted during transcode phase
+        if self.use_cloud:
+            try:
+                if not os.path.exists(video_path):
+                    logger.error(f"Video file not found: {video_path}")
+                    return {'success': False, 'error': 'Video file not found'}
+
+                # Get file size
+                size_bytes = os.path.getsize(video_path)
+                size_mb = size_bytes / (1024 * 1024)
+
+                logger.info(f"Cloud mode: Returning basic metadata for {video_path} ({size_mb:.2f}MB)")
+                logger.info("Full metadata will be extracted during cloud transcode phase")
+
+                # Return basic metadata with placeholder values
+                # These will be updated after transcode completes
+                return {
+                    'success': True,
+                    'duration': 0,  # Will be updated after transcode
+                    'size_mb': size_mb,
+                    'width': 1920,  # Placeholder - will be updated
+                    'height': 1080,  # Placeholder - will be updated
+                    'fps': 30.0,  # Placeholder - will be updated
+                    'codec': 'unknown',  # Will be updated after transcode
+                    'audio_codec': 'unknown'  # Will be updated after transcode
+                }
+            except Exception as e:
+                logger.error(f"Error getting basic video info: {str(e)}")
+                return {'success': False, 'error': str(e)}
+
+        # Local mode: Use FFmpeg to get detailed metadata
         try:
             # FFprobe command to get video metadata as JSON
             command = [

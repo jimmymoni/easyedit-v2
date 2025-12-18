@@ -1,0 +1,14 @@
+{
+  "job_id": "891d855a-5418-44a7-80af-ac884cf9db0f",
+  "upload_id": "ujV9fcTbn9EFnV8jcnq09yjZATy9UxtCRK4w73aGvmm.JDOPq5tYojYCEKXU.YM5syWFjAJ.dN2lR.xA0nAXnM5LA8mEsXC0Zn8bPAZMgCsfYquXw4NIz85F1WzUhuR9",
+  "s3_key": "uploads/891d855a-5418-44a7-80af-ac884cf9db0f/test_video.mp4",
+  "filename": "test_video.mp4",
+  "file_size": 10485760,
+  "chunk_size": 10485760,
+  "total_chunks": 1,
+  "completed_chunks": [],
+  "etags": {},
+  "status": "uploading",
+  "created_at": "2025-12-17T16:53:06.367085",
+  "expires_at": "2025-12-18T16:53:06.367078"
+}

@@ -1,0 +1,707 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+  <sequence id="sequence-1">
+    <name>Timeline 1 (Resolve)</name>
+    <duration>5989</duration>
+    <rate>
+      <timebase>30</timebase>
+      <ntsc>FALSE</ntsc>
+    </rate>
+    <format>
+      <samplecharacteristics>
+        <rate>
+          <timebase>30</timebase>
+          <ntsc>FALSE</ntsc>
+        </rate>
+        <audio>
+          <samplerate>48000</samplerate>
+          <depth>16</depth>
+        </audio>
+      </samplecharacteristics>
+    </format>
+    <media>
+      <video>
+        <track>
+          <clipitem id="clipitem-Function creator.mp4">
+            <name>Function creator.mp4</name>
+            <duration>5989</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>0</start>
+            <end>5989</end>
+            <enabled>TRUE</enabled>
+            <in>0</in>
+            <out>5989</out>
+            <file id="Function creator.mp4 2">
+              <duration>5989</duration>
+              <rate>
+                <timebase>30</timebase>
+                <ntsc>FALSE</ntsc>
+              </rate>
+              <name>Function creator.mp4</name>
+              <pathurl>file://localhost/C:/Users/Tomso/Downloads/Function%20creator.mp4</pathurl>
+              <timecode>
+                <string>01:00:00:00</string>
+                <displayformat>NDF</displayformat>
+                <rate>
+                  <timebase>30</timebase>
+                  <ntsc>FALSE</ntsc>
+                </rate>
+              </timecode>
+              <media>
+                <video>
+                  <duration>5989</duration>
+                  <samplecharacteristics>
+                    <width>1920</width>
+                    <height>1080</height>
+                  </samplecharacteristics>
+                </video>
+                <audio>
+                  <channelcount>2</channelcount>
+                </audio>
+              </media>
+            </file>
+            <filter>
+              
+                            
+              <enabled>TRUE</enabled>
+              
+                            
+              <start>0</start>
+              
+                            
+              <end>5989</end>
+              
+                            
+              <effect>
+                
+                                
+                <name>Basic Motion</name>
+                
+                                
+                <effectid>basic</effectid>
+                
+                                
+                <effecttype>motion</effecttype>
+                
+                                
+                <mediatype>video</mediatype>
+                
+                                
+                <effectcategory>motion</effectcategory>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>Scale</name>
+                  
+                                    
+                  <parameterid>scale</parameterid>
+                  
+                                    
+                  <value>100</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>10000</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>Center</name>
+                  
+                                    
+                  <parameterid>center</parameterid>
+                  
+                                    
+                  <value>
+                    
+                                        
+                    <horiz>0</horiz>
+                    
+                                        
+                    <vert>0</vert>
+                    
+                                    
+                  </value>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>Rotation</name>
+                  
+                                    
+                  <parameterid>rotation</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>-100000</valuemin>
+                  
+                                    
+                  <valuemax>100000</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>Anchor Point</name>
+                  
+                                    
+                  <parameterid>centerOffset</parameterid>
+                  
+                                    
+                  <value>
+                    
+                                        
+                    <horiz>0</horiz>
+                    
+                                        
+                    <vert>0</vert>
+                    
+                                    
+                  </value>
+                  
+                                
+                </parameter>
+                
+                            
+              </effect>
+              
+                        
+            </filter>
+            <filter>
+              
+                            
+              <enabled>TRUE</enabled>
+              
+                            
+              <start>0</start>
+              
+                            
+              <end>5989</end>
+              
+                            
+              <effect>
+                
+                                
+                <name>Crop</name>
+                
+                                
+                <effectid>crop</effectid>
+                
+                                
+                <effecttype>motion</effecttype>
+                
+                                
+                <mediatype>video</mediatype>
+                
+                                
+                <effectcategory>motion</effectcategory>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>left</name>
+                  
+                                    
+                  <parameterid>left</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>right</name>
+                  
+                                    
+                  <parameterid>right</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>top</name>
+                  
+                                    
+                  <parameterid>top</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>bottom</name>
+                  
+                                    
+                  <parameterid>bottom</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                            
+              </effect>
+              
+                        
+            </filter>
+            <filter>
+              
+                            
+              <enabled>TRUE</enabled>
+              
+                            
+              <start>0</start>
+              
+                            
+              <end>5989</end>
+              
+                            
+              <effect>
+                
+                                
+                <name>Opacity</name>
+                
+                                
+                <effectid>opacity</effectid>
+                
+                                
+                <effecttype>motion</effecttype>
+                
+                                
+                <mediatype>video</mediatype>
+                
+                                
+                <effectcategory>motion</effectcategory>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>opacity</name>
+                  
+                                    
+                  <parameterid>opacity</parameterid>
+                  
+                                    
+                  <value>100</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                            
+              </effect>
+              
+                        
+            </filter>
+          </clipitem>
+        </track>
+        <format>
+          <samplecharacteristics>
+            <rate>
+              <timebase>30</timebase>
+            </rate>
+            <width>1920</width>
+            <height>1080</height>
+          </samplecharacteristics>
+        </format>
+      </video>
+      <audio>
+        <track>
+          <clipitem id="clipitem-Function creator.mp4">
+            <name>Function creator.mp4</name>
+            <duration>5989</duration>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>0</start>
+            <end>5989</end>
+            <enabled>TRUE</enabled>
+            <in>0</in>
+            <out>5989</out>
+            <file id="Function creator.mp4 2"/>
+            <filter>
+              
+                            
+              <enabled>TRUE</enabled>
+              
+                            
+              <start>0</start>
+              
+                            
+              <end>5989</end>
+              
+                            
+              <effect>
+                
+                                
+                <name>Basic Motion</name>
+                
+                                
+                <effectid>basic</effectid>
+                
+                                
+                <effecttype>motion</effecttype>
+                
+                                
+                <mediatype>video</mediatype>
+                
+                                
+                <effectcategory>motion</effectcategory>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>Scale</name>
+                  
+                                    
+                  <parameterid>scale</parameterid>
+                  
+                                    
+                  <value>100</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>10000</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>Center</name>
+                  
+                                    
+                  <parameterid>center</parameterid>
+                  
+                                    
+                  <value>
+                    
+                                        
+                    <horiz>0</horiz>
+                    
+                                        
+                    <vert>0</vert>
+                    
+                                    
+                  </value>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>Rotation</name>
+                  
+                                    
+                  <parameterid>rotation</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>-100000</valuemin>
+                  
+                                    
+                  <valuemax>100000</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>Anchor Point</name>
+                  
+                                    
+                  <parameterid>centerOffset</parameterid>
+                  
+                                    
+                  <value>
+                    
+                                        
+                    <horiz>0</horiz>
+                    
+                                        
+                    <vert>0</vert>
+                    
+                                    
+                  </value>
+                  
+                                
+                </parameter>
+                
+                            
+              </effect>
+              
+                        
+            </filter>
+            <filter>
+              
+                            
+              <enabled>TRUE</enabled>
+              
+                            
+              <start>0</start>
+              
+                            
+              <end>5989</end>
+              
+                            
+              <effect>
+                
+                                
+                <name>Crop</name>
+                
+                                
+                <effectid>crop</effectid>
+                
+                                
+                <effecttype>motion</effecttype>
+                
+                                
+                <mediatype>video</mediatype>
+                
+                                
+                <effectcategory>motion</effectcategory>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>left</name>
+                  
+                                    
+                  <parameterid>left</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>right</name>
+                  
+                                    
+                  <parameterid>right</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>top</name>
+                  
+                                    
+                  <parameterid>top</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>bottom</name>
+                  
+                                    
+                  <parameterid>bottom</parameterid>
+                  
+                                    
+                  <value>0</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                            
+              </effect>
+              
+                        
+            </filter>
+            <filter>
+              
+                            
+              <enabled>TRUE</enabled>
+              
+                            
+              <start>0</start>
+              
+                            
+              <end>5989</end>
+              
+                            
+              <effect>
+                
+                                
+                <name>Opacity</name>
+                
+                                
+                <effectid>opacity</effectid>
+                
+                                
+                <effecttype>motion</effecttype>
+                
+                                
+                <mediatype>video</mediatype>
+                
+                                
+                <effectcategory>motion</effectcategory>
+                
+                                
+                <parameter>
+                  
+                                    
+                  <name>opacity</name>
+                  
+                                    
+                  <parameterid>opacity</parameterid>
+                  
+                                    
+                  <value>100</value>
+                  
+                                    
+                  <valuemin>0</valuemin>
+                  
+                                    
+                  <valuemax>100</valuemax>
+                  
+                                
+                </parameter>
+                
+                            
+              </effect>
+              
+                        
+            </filter>
+          </clipitem>
+        </track>
+        <format>
+          <samplecharacteristics>
+            <depth>16</depth>
+            <samplerate>48000</samplerate>
+          </samplecharacteristics>
+        </format>
+      </audio>
+    </media>
+    <timecode>
+      <rate>
+        <timebase>30</timebase>
+        <ntsc>FALSE</ntsc>
+      </rate>
+      <string>01:00:00:00</string>
+      <frame>108000</frame>
+    </timecode>
+  </sequence>
+</xmeml>
