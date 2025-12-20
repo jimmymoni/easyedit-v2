@@ -1,0 +1,53 @@
+
+======================================================================
+  END-TO-END WORKFLOW TEST
+  Upload -> Audio -> Whisper -> XML
+======================================================================
+
+======================================================================
+  STEP 1: Validate Test Video
+======================================================================
+
+[OK] Test video: test_video.mp4
+[OK] File size: 5,070,848 bytes
+
+======================================================================
+  STEP 2: Get Authentication Token
+======================================================================
+
+[OK] Token: eyJhbGciOiJIUzI1NiIsInR5cCI6Ik...
+
+======================================================================
+  STEP 3: Initialize Upload
+======================================================================
+
+[OK] Job ID: e1231945-4855-42fe-8b75-a515bbc3bcd1
+[OK] Chunk URLs: 1 URLs generated
+[OK] Total chunks: 1
+
+======================================================================
+  STEP 4: Upload Video Chunks
+======================================================================
+
+Uploading chunk 1/1 (5,070,848 bytes)...
+  [OK] Chunk 1 uploaded (ETag: d8f0a30e618c...) - 100.0% complete
+
+[OK] All chunks uploaded successfully
+
+======================================================================
+  STEP 5: Complete Upload & Trigger Processing
+======================================================================
+
+[OK] Upload completed
+[OK] Video URL: N/A
+[OK] Status: N/A
+
+======================================================================
+  STEP 6: Monitor Processing Progress
+======================================================================
+
+Monitoring job status (polling every 5 seconds)...
+
+[16:52:04] Status: failed | Progress: 0% | Stage: N/A
+
+[ERROR] Processing failed: Unknown error

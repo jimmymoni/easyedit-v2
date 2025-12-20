@@ -15,7 +15,11 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(curl:*)",
       "WebSearch",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(dir:*)",
+      "Bash(tree:*)",
+      "Bash(Get-Content \"C:\\\\Users\\\\Tomso\\\\.claude\\\\plans\\\\melodic-bouncing-metcalfe.md\")",
+      "Bash(Measure-Object -Line)"
     ],
     "deny": [],
     "ask": []

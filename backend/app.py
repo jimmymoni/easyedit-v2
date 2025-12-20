@@ -460,15 +460,13 @@ def analyze_video(job_id):
         from utils.error_handlers import validate_job_id
         job_id = validate_job_id(job_id)
 
-        # Get job
-        job_data = processing_jobs.get(job_id)  # Removed job_manager fallback
-        if not job_data:
+        # Get job from video_jobs (not processing_jobs)
+        video_job = video_jobs.get(job_id)
+        if not video_job:
             return jsonify({"error": "Job not found"}), 404
 
-        if job_data.get('type') != 'video_editing':
-            return jsonify({"error": "Not a video editing job"}), 400
-
-        video_path = job_data.get('video_file')
+        # Check if video file exists
+        video_path = video_job.original_path
         if not video_path or not os.path.exists(video_path):
             return jsonify({"error": "Video file not found"}), 404
 
@@ -764,6 +762,7 @@ def download_video_xml(job_id):
         from utils.error_handlers import validate_job_id
         from services.s3_upload_manager import S3UploadManager
         from flask import redirect
+        from models.video_job import VideoJobStatus
 
         job_id = validate_job_id(job_id)
 
@@ -1405,13 +1404,60 @@ def upload_video_phase1():
         shutil.move(temp_path, permanent_path)
         logger.info(f"Video moved to permanent storage: {permanent_path}")
 
-        # Step 7: Create VideoJob with placeholder metadata
+        # Step 6.5: Upload to S3
+        logger.info(f"Uploading video to S3...")
+        try:
+            import boto3
+            from botocore.exceptions import ClientError
+
+            # Initialize S3 client with regional endpoint
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=Config.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=Config.AWS_SECRET_ACCESS_KEY,
+                region_name=Config.AWS_REGION,
+                endpoint_url=f'https://s3.{Config.AWS_REGION}.amazonaws.com'
+            )
+
+            # Upload to S3
+            s3_key = f"uploads/{job_id}/{original_filename}"
+            s3_client.upload_file(
+                permanent_path,
+                Config.S3_VIDEO_BUCKET,
+                s3_key,
+                ExtraArgs={'ContentType': 'video/mp4'}  # Set proper content type
+            )
+
+            logger.info(f"Video uploaded to S3: s3://{Config.S3_VIDEO_BUCKET}/{s3_key}")
+
+        except ClientError as e:
+            logger.error(f"S3 upload failed: {str(e)}")
+            # Cleanup local file
+            if os.path.exists(permanent_path):
+                os.remove(permanent_path)
+            return jsonify({
+                "success": False,
+                "error": f"Failed to upload video to cloud storage: {str(e)}",
+                "code": "S3_UPLOAD_FAILED"
+            }), 500
+        except Exception as e:
+            logger.error(f"Unexpected error during S3 upload: {str(e)}")
+            # Cleanup local file
+            if os.path.exists(permanent_path):
+                os.remove(permanent_path)
+            return jsonify({
+                "success": False,
+                "error": "Failed to upload video to cloud storage",
+                "code": "S3_UPLOAD_ERROR"
+            }), 500
+
+        # Step 7: Create VideoJob with S3 key (not local path!)
         # Metadata will be filled by cloud processing later
         video_job = VideoJob(
             job_id=job_id,
             user_id=user_id,
             original_filename=original_filename,
-            original_path=permanent_path,
+            original_path=s3_key,  # S3 key instead of local path
             original_size_bytes=file_size,
             original_format=original_filename.rsplit('.', 1)[1].lower() if '.' in original_filename else 'unknown'
             # Metadata placeholders (cloud will fill these later)
@@ -2210,36 +2256,52 @@ def stream_video_proxy(job_id: str):
 
         video_job = video_jobs[job_id]
 
-        # Step 3: Check if proxy is ready
-        if not video_job.proxy_ready:
-            logger.warning(f"Proxy not ready for job {job_id}, status: {video_job.status.value}")
+        # Step 3: Check if video is ready (proxy OR original)
+        # In Replicate-only mode, original video can be served even if proxy isn't ready
+        has_proxy = video_job.proxy_ready and video_job.proxy_path and os.path.exists(video_job.proxy_path)
+        has_original = video_job.original_path and os.path.exists(video_job.original_path)
+
+        if not has_proxy and not has_original:
+            logger.warning(f"No video available for job {job_id}, status: {video_job.status.value}")
             return jsonify({
                 "success": False,
-                "error": f"Proxy video is not ready yet. Current status: {video_job.status.value}",
-                "code": "PROXY_NOT_READY",
+                "error": f"Video is not ready yet. Current status: {video_job.status.value}",
+                "code": "VIDEO_NOT_READY",
                 "job_id": job_id,
                 "status": video_job.status.value,
                 "progress_percent": video_job.transcode_progress_percent
             }), 425  # 425 Too Early - resource not yet available
 
-        # Step 4: Check if proxy file exists on disk
-        if not video_job.proxy_path or not os.path.exists(video_job.proxy_path):
-            logger.error(f"Proxy file missing for job {job_id}: {video_job.proxy_path}")
+        # Step 4: Check if proxy file exists on disk, fallback to original if not
+        video_path = None
+        is_original = False
+
+        if video_job.proxy_path and os.path.exists(video_job.proxy_path):
+            # Use proxy video (preferred - optimized for web)
+            video_path = video_job.proxy_path
+            logger.info(f"Serving proxy video for job {job_id}")
+        elif video_job.original_path and os.path.exists(video_job.original_path):
+            # Fallback to original video (Replicate-only mode)
+            video_path = video_job.original_path
+            is_original = True
+            logger.info(f"Serving original video for job {job_id} (proxy not available)")
+        else:
+            # Neither proxy nor original exists - error
+            logger.error(f"No video file available for job {job_id} (proxy: {video_job.proxy_path}, original: {video_job.original_path})")
             return jsonify({
                 "success": False,
-                "error": "Proxy file not found on disk",
-                "code": "PROXY_FILE_NOT_FOUND",
+                "error": "Video file not found (neither proxy nor original)",
+                "code": "VIDEO_FILE_NOT_FOUND",
                 "job_id": job_id
             }), 404
 
-        proxy_path = video_job.proxy_path
-        file_size = os.path.getsize(proxy_path)
+        file_size = os.path.getsize(video_path)
 
         # Step 5: Detect MIME type
-        mime_type, _ = mimetypes.guess_type(proxy_path)
+        mime_type, _ = mimetypes.guess_type(video_path)
         if not mime_type:
-            # Default to MP4 for proxy videos
-            mime_type = 'video/mp4'
+            # Default to MP4 for proxy videos, detect for originals
+            mime_type = 'video/mp4' if not is_original else 'video/quicktime'
 
         # Step 6: Parse Range header (if present)
         range_header = request.headers.get('Range', None)
@@ -2270,7 +2332,7 @@ def stream_video_proxy(job_id: str):
                 # Step 7: Stream partial content (206 Partial Content)
                 def generate_partial():
                     """Generator for streaming partial content"""
-                    with open(proxy_path, 'rb') as video_file:
+                    with open(video_path, 'rb') as video_file:
                         video_file.seek(start)
                         remaining = content_length
                         chunk_size = 8192  # 8KB chunks
@@ -2302,7 +2364,7 @@ def stream_video_proxy(job_id: str):
         # Step 8: Stream full content (200 OK)
         def generate_full():
             """Generator for streaming full content"""
-            with open(proxy_path, 'rb') as video_file:
+            with open(video_path, 'rb') as video_file:
                 chunk_size = 8192  # 8KB chunks
                 while True:
                     chunk = video_file.read(chunk_size)

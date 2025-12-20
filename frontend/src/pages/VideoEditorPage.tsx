@@ -81,9 +81,13 @@ const VideoEditorPage: React.FC = () => {
           setStep('preview');
           setIsPolling(false);
         } else if (response.status === 'failed') {
-          setError(response.message || 'Video analysis failed');
+          // Clear any pending processing state before showing error
           setStep('upload');
           setIsPolling(false);
+          // Small delay to ensure state updates propagate
+          setTimeout(() => {
+            setError(response.message || 'Video analysis failed');
+          }, 100);
         }
       } else if (step === 'processing') {
         // Check video cutting status
@@ -94,9 +98,13 @@ const VideoEditorPage: React.FC = () => {
           setStep('complete');
           setIsPolling(false);
         } else if (job.status === 'failed') {
-          setError(job.message || 'Video processing failed');
+          // Clear any pending processing state before showing error
           setStep('preview');
           setIsPolling(false);
+          // Small delay to ensure state updates propagate
+          setTimeout(() => {
+            setError(job.message || 'Video processing failed');
+          }, 100);
         }
       }
     } catch (err: any) {
@@ -115,6 +123,7 @@ const VideoEditorPage: React.FC = () => {
     if (!jobId) return;
 
     try {
+      setError(null);  // Clear any previous errors
       setStep('processing');
       await api.applyVideoCuts(jobId, adjustments, encodingMethod);
     } catch (err: any) {
@@ -237,8 +246,8 @@ const VideoEditorPage: React.FC = () => {
           </div>
         ) : (
           <div className="max-w-5xl mx-auto space-y-8">
-            {/* Error Display */}
-            {error && (
+            {/* Error Display - Only show if not currently processing */}
+            {error && step !== 'processing' && step !== 'analyzing' && (
               <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 mb-6">
                 <div className="flex items-start space-x-3">
                   <div className="flex-shrink-0">

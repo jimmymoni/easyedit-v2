@@ -10,9 +10,18 @@ services:
     environment:
       - FLASK_ENV=production
       - FLASK_DEBUG=False
-      - SONIOX_API_KEY=${SONIOX_API_KEY}
+      # AI API Keys
+      - REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - MAX_FILE_SIZE_MB=500
+      # AWS S3 Configuration
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_VIDEO_BUCKET=${S3_VIDEO_BUCKET:-easyedit-videos}
+      # File Processing Configuration
+      - MAX_FILE_SIZE_MB=5120
+      - S3_CHUNK_SIZE_MB=10
+      - S3_PRESIGNED_URL_EXPIRATION=86400
       - TEMP_FILE_RETENTION_HOURS=24
       - MIN_CLIP_LENGTH_SECONDS=5
       - SILENCE_THRESHOLD_DB=-40

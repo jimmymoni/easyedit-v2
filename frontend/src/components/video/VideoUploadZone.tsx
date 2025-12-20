@@ -69,8 +69,7 @@ export default function VideoUploadZone({ onUploadComplete }: VideoUploadZonePro
       setUploadComplete(true);
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Start analysis automatically
-      await api.analyzeVideo(response.job_id);
+      // Analysis starts automatically in background, no need to call analyzeVideo
       onUploadComplete(response.job_id);
     } catch (err: any) {
       console.error('Upload failed:', err);

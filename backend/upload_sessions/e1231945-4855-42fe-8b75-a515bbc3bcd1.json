@@ -1,0 +1,22 @@
+{
+  "job_id": "e1231945-4855-42fe-8b75-a515bbc3bcd1",
+  "upload_id": "p5huMO19YKkucIIFNoZcFjfYg1WotE8L7lpWanzr5b3s432sNbMsqfERNTWjPLmickhfi3jtvQzWdrdsmI0K.ytQspkZPpewfAIxyxAAnLLql_T2WL8KHix4E90ApdSz",
+  "s3_key": "uploads/e1231945-4855-42fe-8b75-a515bbc3bcd1/test_video.mp4",
+  "filename": "test_video.mp4",
+  "file_size": 5070848,
+  "chunk_size": 10485760,
+  "total_chunks": 1,
+  "completed_chunks": [
+    1
+  ],
+  "etags": {
+    "1": "d8f0a30e618c159407819655dfbbc522"
+  },
+  "status": "completed",
+  "created_at": "2025-12-18T16:51:53.767342",
+  "expires_at": "2025-12-19T16:51:53.767337",
+  "updated_at": "2025-12-18T16:51:59.435258",
+  "completed_at": "2025-12-18T16:52:02.592947",
+  "s3_url": "s3://easyedit-videos/uploads/e1231945-4855-42fe-8b75-a515bbc3bcd1/test_video.mp4",
+  "s3_etag": "\"e8d1caec690bff171fe929c3d9acdfd6-1\""
+}

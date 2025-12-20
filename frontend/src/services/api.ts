@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { ProcessingJob, ProcessingOptions, UploadResponse, ProcessingResponse, VideoUploadResponse, VideoJob, VideoAnalysis, SegmentAdjustment, SystemCheckResponse, VideoProxyStatus, WaveformData } from '../types';
 
-// TEMPORARY: Testing minimal app on port 5000
-const API_BASE_URL = 'http://localhost:5000';
+// Use environment variable for API base URL, default to localhost:5000 for development
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -159,7 +159,7 @@ export const simpleUploadFiles = async (
 
   // Create a bare axios instance WITHOUT interceptors
   // CRITICAL: Use direct backend URL to bypass Vite proxy which strips FormData
-  const directBackendURL = 'http://localhost:5000';  // Testing minimal app
+  const directBackendURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
   const simpleAxios = axios.create({
     baseURL: directBackendURL,
     timeout: 300000,

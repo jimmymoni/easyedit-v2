@@ -173,8 +173,8 @@ class ReplicateWhisperClient:
                 logger.info(f"Input parameters: {list(input_params.keys())}")
                 logger.info(f"Using custom timeout: write=600s, read=600s")
 
-                # Retry logic for transient 502 errors (Replicate infrastructure issues)
-                max_retries = 3
+                # Retry logic for transient errors (502 infrastructure issues, 429 rate limits)
+                max_retries = 5  # Increased to handle rate limits better
                 for attempt in range(max_retries):
                     try:
                         output = self.client.run(
@@ -183,13 +183,35 @@ class ReplicateWhisperClient:
                         )
                         break  # Success! Exit retry loop
                     except Exception as e:
-                        # Check if it's a 502 error (transient infrastructure issue)
-                        if "502" in str(e) and attempt < max_retries - 1:
-                            wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                            logger.warning(f"Replicate API returned 502, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                        error_str = str(e)
+                        should_retry = False
+                        wait_time = 0
+
+                        # Handle 429 rate limit errors
+                        if "429" in error_str or "throttled" in error_str.lower():
+                            if attempt < max_retries - 1:
+                                # Extract wait time from error message or use default
+                                # Message format: "Your rate limit resets in ~2s"
+                                import re
+                                wait_match = re.search(r'resets in ~?(\d+)s', error_str)
+                                if wait_match:
+                                    wait_time = int(wait_match.group(1)) + 2  # Add 2s buffer
+                                else:
+                                    wait_time = 10  # Default wait for rate limit
+                                should_retry = True
+                                logger.warning(f"Replicate API rate limit (429), waiting {wait_time}s before retry... (attempt {attempt + 1}/{max_retries})")
+
+                        # Handle 502 infrastructure errors
+                        elif "502" in error_str:
+                            if attempt < max_retries - 1:
+                                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                                should_retry = True
+                                logger.warning(f"Replicate API returned 502, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+
+                        if should_retry:
                             time.sleep(wait_time)
                         else:
-                            # Not a 502 or max retries reached
+                            # Not a retryable error or max retries reached
                             raise
 
             logger.info(f"Transcription completed successfully")

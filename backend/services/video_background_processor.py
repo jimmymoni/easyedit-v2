@@ -488,7 +488,8 @@ def _run_analysis(job_id: str, video_jobs: dict, job_lock: threading.Lock) -> No
                     region_name=Config.AWS_REGION,
                     endpoint_url=f'https://s3.{Config.AWS_REGION}.amazonaws.com'
                 )
-                s3_key = f"uploads/{job_id}/{video_job.filename}"
+                # Use original_path directly - it's now an S3 key (uploaded in upload endpoint)
+                s3_key = video_job.original_path
                 video_presigned_url = s3_client.generate_presigned_url(
                     'get_object',
                     Params={'Bucket': Config.S3_VIDEO_BUCKET, 'Key': s3_key},

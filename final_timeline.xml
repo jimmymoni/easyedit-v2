@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+  <sequence id="sequence-1">
+    <name>Timeline_ad80283e-b557-4db2-b46d-b94105c53650</name>
+    <duration>0</duration>
+    <rate>
+      <timebase>30</timebase>
+      <ntsc>FALSE</ntsc>
+    </rate>
+    <format>
+      <samplecharacteristics>
+        <rate>
+          <timebase>30</timebase>
+          <ntsc>FALSE</ntsc>
+        </rate>
+        <audio>
+          <samplerate>48000</samplerate>
+          <depth>16</depth>
+        </audio>
+      </samplecharacteristics>
+    </format>
+    <media>
+      <video>
+        <track/>
+        <format>
+          <samplecharacteristics>
+            <rate>
+              <timebase>30</timebase>
+            </rate>
+            <width>1920</width>
+            <height>1080</height>
+          </samplecharacteristics>
+        </format>
+      </video>
+      <file id="file-1">
+        <duration>0</duration>
+        <rate>
+          <timebase>30</timebase>
+          <ntsc>FALSE</ntsc>
+        </rate>
+        <name>test_video.mp4</name>
+        <pathurl>s3://easyedit-videos/uploads/ad80283e-b557-4db2-b46d-b94105c53650/test_video.mp4</pathurl>
+        <media/>
+      </file>
+    </media>
+    <timecode>
+      <rate>
+        <timebase>30</timebase>
+        <ntsc>FALSE</ntsc>
+      </rate>
+      <string>01:00:00:00</string>
+      <frame>108000</frame>
+    </timecode>
+  </sequence>
+</xmeml>
