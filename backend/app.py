@@ -2101,7 +2101,29 @@ def get_video_status(job_id: str):
         # Step 4: Build response using VideoJob.to_dict()
         job_dict = video_job.to_dict()
 
-        # Step 5: Structure response with organized sections
+        # Step 5: Determine video URL (proxy or S3 direct)
+        video_url = None
+        proxy_is_ready = job_dict['proxy_ready']
+
+        if proxy_is_ready and job_dict['proxy_url']:
+            # Proxy exists, use local proxy endpoint
+            video_url = job_dict['proxy_url']
+        elif 's3_key' in job_dict.get('metadata', {}):
+            # No proxy, generate S3 pre-signed URL for direct playback
+            try:
+                from services.s3_upload_manager import S3UploadManager
+                s3_manager = S3UploadManager()
+                video_url = s3_manager.get_video_presigned_url(job_id, expiration=3600)
+                proxy_is_ready = True  # Mark as ready since S3 video is accessible
+                logger.info(f"Generated S3 presigned URL for job {job_id} (no proxy)")
+            except Exception as e:
+                logger.warning(f"Failed to generate S3 presigned URL for job {job_id}: {e}")
+                proxy_is_ready = False
+
+        # Override proxy_status to 'ready' if S3 URL is available
+        proxy_status_override = 'ready' if (proxy_is_ready and video_url) else job_dict.get('proxy_status', 'pending')
+
+        # Step 6: Structure response with organized sections
         response = {
             "success": True,
             "job_id": job_dict['job_id'],
@@ -2132,8 +2154,9 @@ def get_video_status(job_id: str):
             "elapsed_transcode_time_seconds": job_dict['elapsed_transcode_time_seconds'],
 
             # Proxy section
-            "proxy_ready": job_dict['proxy_ready'],
-            "proxy_url": job_dict['proxy_url'],
+            "proxy_ready": proxy_is_ready,
+            "proxy_status": proxy_status_override,
+            "proxy_url": video_url,
             "proxy_size_mb": job_dict['proxy_size_mb'],
 
             # Timestamps section

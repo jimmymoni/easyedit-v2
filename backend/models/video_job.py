@@ -146,6 +146,18 @@ class VideoJob:
         )
 
     @property
+    def proxy_status(self) -> str:
+        """Get proxy status as string for frontend compatibility"""
+        if self.status == VideoJobStatus.FAILED:
+            return 'failed'
+        elif self.status == VideoJobStatus.READY or self.proxy_ready:
+            return 'ready'
+        elif self.status in (VideoJobStatus.TRANSCODING, VideoJobStatus.PROCESSING):
+            return 'transcoding'
+        else:
+            return 'pending'
+
+    @property
     def waveform_ready(self) -> bool:
         """Check if waveform is ready for timeline visualization"""
         return (
@@ -334,6 +346,7 @@ class VideoJob:
 
             # Proxy
             'proxy_ready': self.proxy_ready,
+            'proxy_status': self.proxy_status,
             'proxy_url': self.proxy_url,
             'proxy_size_mb': round(self.proxy_size_mb, 2) if self.proxy_size_mb else None,
 

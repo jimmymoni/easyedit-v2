@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import * as api from '../../../services/api';
 import { VideoJob } from '../../../types';
 import { VideoPlayerProps, VideoPlayerState, ProxyStatus } from './VideoPlayer.types';
@@ -17,21 +17,27 @@ import VideoPlayerControls from './VideoPlayerControls';
  *
  * Usage:
  * ```tsx
+ * const videoRef = useRef<HTMLVideoElement>(null);
+ *
  * <VideoPlayer
+ *   ref={videoRef}
  *   jobId="video-job-123"
  *   onTimeUpdate={(time) => console.log('Current time:', time)}
  *   onDurationChange={(duration) => console.log('Duration:', duration)}
  * />
  * ```
  */
-const VideoPlayer: React.FC<VideoPlayerProps> = ({
+const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(({
   jobId,
   onTimeUpdate,
   onDurationChange,
   className = '',
-}) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
+}, ref) => {
+  const internalVideoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Expose the video element to parent components via ref
+  useImperativeHandle(ref, () => internalVideoRef.current as HTMLVideoElement);
 
   // Player state
   const [playerState, setPlayerState] = useState<VideoPlayerState>({
@@ -61,7 +67,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         if (status.proxy_status === 'ready') {
           setProxyStatus('ready');
-          const url = api.getVideoProxyUrl(jobId);
+          const url = status.proxy_url || api.getVideoProxyUrl(jobId);
           setVideoUrl(url);
         } else if (status.proxy_status === 'transcoding') {
           setProxyStatus('transcoding');
@@ -106,7 +112,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only handle if video is ready
-      if (!videoRef.current || proxyStatus !== 'ready') return;
+      if (!internalVideoRef.current || proxyStatus !== 'ready') return;
 
       // Don't handle shortcuts in input fields
       const targetElement = e.target as HTMLElement;
@@ -161,25 +167,25 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Video event handlers
   const handleTimeUpdate = () => {
-    if (!videoRef.current) return;
-    const currentTime = videoRef.current.currentTime;
+    if (!internalVideoRef.current) return;
+    const currentTime = internalVideoRef.current.currentTime;
     setPlayerState((prev) => ({ ...prev, currentTime }));
     if (onTimeUpdate) onTimeUpdate(currentTime);
   };
 
   const handleDurationChange = () => {
-    if (!videoRef.current) return;
-    const duration = videoRef.current.duration;
+    if (!internalVideoRef.current) return;
+    const duration = internalVideoRef.current.duration;
     setPlayerState((prev) => ({ ...prev, duration }));
     if (onDurationChange) onDurationChange(duration);
   };
 
   const handleProgress = () => {
-    if (!videoRef.current) return;
-    const buffered = videoRef.current.buffered;
+    if (!internalVideoRef.current) return;
+    const buffered = internalVideoRef.current.buffered;
     if (buffered.length > 0) {
       const bufferedEnd = buffered.end(buffered.length - 1);
-      const duration = videoRef.current.duration;
+      const duration = internalVideoRef.current.duration;
       if (isFinite(duration) && duration > 0) {
         const bufferedPercent = (bufferedEnd / duration) * 100;
         setPlayerState((prev) => ({ ...prev, buffered: bufferedPercent }));
@@ -193,39 +199,39 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Control functions
   const togglePlayPause = () => {
-    if (!videoRef.current) return;
+    if (!internalVideoRef.current) return;
     if (playerState.isPlaying) {
-      videoRef.current.pause();
+      internalVideoRef.current.pause();
       setPlayerState((prev) => ({ ...prev, isPlaying: false }));
     } else {
-      videoRef.current.play();
+      internalVideoRef.current.play();
       setPlayerState((prev) => ({ ...prev, isPlaying: true }));
     }
   };
 
   const seekTo = (time: number) => {
-    if (!videoRef.current) return;
-    videoRef.current.currentTime = time;
+    if (!internalVideoRef.current) return;
+    internalVideoRef.current.currentTime = time;
     setPlayerState((prev) => ({ ...prev, currentTime: time }));
   };
 
   const seekRelative = (seconds: number) => {
-    if (!videoRef.current) return;
-    const newTime = Math.max(0, Math.min(playerState.duration, videoRef.current.currentTime + seconds));
+    if (!internalVideoRef.current) return;
+    const newTime = Math.max(0, Math.min(playerState.duration, internalVideoRef.current.currentTime + seconds));
     seekTo(newTime);
   };
 
   const changeVolume = (delta: number) => {
-    if (!videoRef.current) return;
+    if (!internalVideoRef.current) return;
     const newVolume = Math.max(0, Math.min(1, playerState.volume + delta));
-    videoRef.current.volume = newVolume;
+    internalVideoRef.current.volume = newVolume;
     setPlayerState((prev) => ({ ...prev, volume: newVolume, isMuted: newVolume === 0 }));
   };
 
   const toggleMute = () => {
-    if (!videoRef.current) return;
+    if (!internalVideoRef.current) return;
     const newMuted = !playerState.isMuted;
-    videoRef.current.muted = newMuted;
+    internalVideoRef.current.muted = newMuted;
     setPlayerState((prev) => ({ ...prev, isMuted: newMuted }));
   };
 
@@ -260,7 +266,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         <div className="relative group">
           {/* Video element */}
           <video
-            ref={videoRef}
+            ref={internalVideoRef}
             src={videoUrl || ''}
             className="w-full aspect-video"
             onTimeUpdate={handleTimeUpdate}
@@ -318,6 +324,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
     </div>
   );
-};
+});
+
+VideoPlayer.displayName = 'VideoPlayer';
 
 export default VideoPlayer;
