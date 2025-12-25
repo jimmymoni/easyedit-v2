@@ -103,6 +103,12 @@ backend/tests/sample_data/*.flac
 # Job data storage (persistent across restarts but not committed)
 backend/jobs_data/
 
+# Upload sessions (temporary session tracking data)
+backend/upload_sessions/
+
+# Test files
+backend/test_*.py
+
 # Redis dump
 dump.rdb
 

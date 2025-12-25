@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
+import { Sparkles } from 'lucide-react';
 import { VideoAnalysis, VideoSegment, SegmentAdjustment } from '../../types';
 import * as api from '../../services/api';
+import AIPromptPanel from './AIPromptPanel';
 
 interface TimelineEditorNewProps {
   analysis: VideoAnalysis;
@@ -19,6 +21,7 @@ export default function TimelineEditorNew({
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string>('');
+  const [showAIPanel, setShowAIPanel] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const isPreview = jobId === 'preview-demo';
@@ -226,12 +229,21 @@ export default function TimelineEditorNew({
           </button>
           <h1 className="font-medium text-sm tracking-wide">EasyEdit</h1>
         </div>
-        <button
-          onClick={handleExport}
-          className="bg-orange-500/90 hover:bg-orange-500 text-white px-3 py-1 rounded-md text-xs"
-        >
-          Export XML
-        </button>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setShowAIPanel(true)}
+            className="flex items-center gap-2 bg-blue-600/90 hover:bg-blue-600 text-white px-3 py-1 rounded-md text-xs transition-colors"
+          >
+            <Sparkles className="h-3 w-3" />
+            AI Edit
+          </button>
+          <button
+            onClick={handleExport}
+            className="bg-orange-500/90 hover:bg-orange-500 text-white px-3 py-1 rounded-md text-xs"
+          >
+            Export XML
+          </button>
+        </div>
       </div>
 
       {/* Main Area */}
@@ -329,6 +341,26 @@ export default function TimelineEditorNew({
           </div>
         </div>
       </div>
+
+      {/* AI Prompt Panel (Slide-out) */}
+      <AIPromptPanel
+        isOpen={showAIPanel}
+        onClose={() => setShowAIPanel(false)}
+        jobId={jobId}
+        onApplyChanges={(changes) => {
+          // Convert AI changes to segment adjustments and apply
+          if (changes && changes.segments) {
+            const adjustments: SegmentAdjustment[] = changes.segments.map((seg: any) => ({
+              id: seg.id,
+              action: seg.action,
+              start_time: seg.start_time,
+              end_time: seg.end_time
+            }));
+            onApply(adjustments, 'reencode');
+          }
+          setShowAIPanel(false);
+        }}
+      />
     </div>
   );
 }

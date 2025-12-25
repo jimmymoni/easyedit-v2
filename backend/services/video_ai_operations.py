@@ -4,8 +4,8 @@ Implements AI-powered video editing operations for natural language interface
 """
 import logging
 import json
+import replicate
 from typing import Dict, List, Any, Optional
-from openai import OpenAI
 from config import Config
 from services.repeated_take_detector import RepeatedTakeDetector
 from services.simple_audio_analyzer import SimpleAudioAnalyzer
@@ -29,11 +29,11 @@ class VideoAIOperations:
         self.video_info = job_data.get('video_info', {})
         self.analysis = job_data.get('analysis', {})
 
-        # Initialize OpenAI client for AI operations
-        self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY) if Config.OPENAI_API_KEY else None
+        # Check if Replicate API is available for AI operations
+        self.replicate_available = bool(Config.REPLICATE_API_TOKEN)
 
-        if not self.openai_client:
-            logger.warning("OpenAI API key not configured - some AI operations will be limited")
+        if not self.replicate_available:
+            logger.warning("Replicate API token not configured - some AI operations will be limited")
 
     # ==========================================
     # OPERATION 1: REMOVE REPEATED TAKES
@@ -118,15 +118,15 @@ class VideoAIOperations:
         try:
             logger.info(f"Creating {target_duration}s highlight reel")
 
-            if not self.openai_client:
+            if not self.replicate_available:
                 return {
                     'operation': 'create_highlight',
-                    'description': 'OpenAI API key required for highlight reel creation',
+                    'description': 'Replicate API token required for highlight reel creation',
                     'segments': [],
                     'segments_affected': 0,
                     'time_saved': 0,
                     'new_duration': 0,
-                    'error': 'OpenAI API key not configured'
+                    'error': 'Replicate API token not configured'
                 }
 
             if not self.transcription:
@@ -520,18 +520,19 @@ Respond with ONLY a JSON array (no markdown):
   }}
 ]"""
 
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "system", "content": "You are an expert video editor. Respond ONLY with valid JSON array."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=2048,
-                temperature=0.1,
-                timeout=90
+            # Call Replicate GPT-4o for highlight analysis
+            full_prompt = f"You are an expert video editor. Respond ONLY with valid JSON array.\n\n{prompt}"
+
+            output = replicate.run(
+                "openai/gpt-4o",
+                input={
+                    "prompt": full_prompt,
+                    "max_tokens": 2048,
+                    "temperature": 0.1
+                }
             )
 
-            response_text = response.choices[0].message.content.strip()
+            response_text = "".join(output).strip()
 
             # Remove markdown if present
             if response_text.startswith('```'):
@@ -584,18 +585,19 @@ Respond with ONLY a JSON array (no markdown):
   }}
 ]"""
 
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "system", "content": "You are an expert video editor. Respond ONLY with valid JSON array."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1024,
-                temperature=0.2,
-                timeout=60
+            # Call Replicate GPT-4o for cut point analysis
+            full_prompt = f"You are an expert video editor. Respond ONLY with valid JSON array.\n\n{prompt}"
+
+            output = replicate.run(
+                "openai/gpt-4o",
+                input={
+                    "prompt": full_prompt,
+                    "max_tokens": 1024,
+                    "temperature": 0.2
+                }
             )
 
-            response_text = response.choices[0].message.content.strip()
+            response_text = "".join(output).strip()
 
             # Remove markdown if present
             if response_text.startswith('```'):
