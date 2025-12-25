@@ -139,6 +139,313 @@ LOG_LEVEL=INFO
 
 **CRITICAL**: Always edit `backend/.env` (not root `.env`) for backend configuration!
 
+---
+
+## ⚠️ CRITICAL CONFIGURATION RULES
+
+### 1. Frontend Port Requirement
+
+**ALWAYS use port 3000 for frontend development.**
+
+| Port | Status | Reason |
+|------|--------|--------|
+| 3000 | ✅ Required | S3 CORS allows this origin |
+| 3002 | ⚠️ Allowed | S3 CORS allows this origin |
+| 3005, 5173, etc. | ❌ Blocked | S3 CORS will reject uploads |
+
+**If uploads fail with CORS error:**
+1. ❌ DO NOT modify S3 CORS configuration
+2. ✅ Check what port frontend is running on
+3. ✅ Restart frontend on port 3000
+
+**Why this matters:** S3 CORS is configured to only accept requests from specific origins. Changing CORS to wildcard `["*"]` is NOT the solution - using the correct port is.
+
+### 2. S3 CORS Configuration
+
+**Bucket:** `easyedit-videos`
+**Region:** `eu-north-1`
+
+**Configured Allowed Origins:**
+```json
+["http://localhost:3000", "http://localhost:3002", "https://easyedit.com"]
+```
+
+**Required Exposed Headers:**
+```json
+["ETag"]
+```
+
+The ETag header is critical for multipart upload completion. If uploads fail at the finalization step, verify CORS exposes ETag.
+
+### 3. No Local Video Processing
+
+**STRICT REQUIREMENT: All video operations must use cloud services (Replicate).**
+
+| Operation | ✅ Allowed | ❌ Not Allowed |
+|-----------|-----------|----------------|
+| Transcription | Replicate Whisper | Local Whisper |
+| Audio extraction | Replicate fofr/toolkit | Local FFmpeg |
+| Video playback | S3 presigned URLs | Local file serving |
+| Transcoding | AWS MediaConvert (if needed) | Local FFmpeg |
+
+**Code patterns that violate this requirement:**
+- `subprocess.run(['ffmpeg', ...])`
+- `import ffmpeg`
+- Local file paths for video processing
+- Any `ffmpeg` command execution
+
+If you need video processing, use Replicate models or AWS services.
+
+---
+
+## API Function Reference
+
+### Video Status Functions
+
+| Function Name | Location | Status | Use Case |
+|---------------|----------|--------|----------|
+| `api.getVideoJobStatus(jobId)` | api.ts:670-673 | ✅ EXISTS | Get video job status with proxy URL |
+| `api.checkVideoStatus()` | - | ❌ DOES NOT EXIST | Never use |
+| `api.getVideoStatus()` | - | ❌ DOES NOT EXIST | Never use |
+
+**Correct usage:**
+```tsx
+// ✅ Correct - function exists
+const status = await api.getVideoJobStatus(jobId);
+const videoUrl = status.proxy_url;
+
+// ❌ Wrong - these functions don't exist, will throw TypeError
+const status = await api.checkVideoStatus(jobId);
+const status = await api.getVideoStatus(jobId);
+```
+
+**Rule: Before using any API function, verify it exists in `frontend/src/services/api.ts`**
+
+### Video Status Response Structure
+```typescript
+interface VideoJobStatus {
+  job_id: string;
+  status: string;
+  proxy_url: string | null;      // S3 presigned URL for video playback
+  proxy_status: string;          // 'pending' | 'ready' | 'failed'
+  // ... other fields
+}
+```
+
+---
+
+## Data Structure Contracts
+
+### Whisper Transcription → Frontend Segments
+
+**⚠️ Backend and frontend use DIFFERENT property names!**
+
+**Backend returns (from Whisper):**
+```json
+{
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.5,
+      "text": "Hello world"
+    }
+  ]
+}
+```
+
+**Frontend expects:**
+```typescript
+interface Segment {
+  start_time: number;
+  end_time: number;
+  text: string;
+  status: 'keep' | 'remove';
+}
+```
+
+**Always normalize segments in frontend:**
+```tsx
+const normalizedSegments = segments.map((seg, idx) => ({
+  id: seg.id ?? `segment-${idx}`,
+  start_time: seg.start_time ?? seg.start ?? 0,
+  end_time: seg.end_time ?? seg.end ?? 0,
+  text: seg.text ?? '',
+  status: seg.status ?? 'keep'
+}));
+```
+
+### Null Safety Requirements
+
+**Always add fallbacks for numeric values used with .toFixed():**
+```tsx
+// ❌ CRASHES if value is undefined
+{segment.start_time.toFixed(2)}
+
+// ✅ SAFE with fallback
+{(segment.start_time ?? 0).toFixed(2)}
+```
+
+**Always add fallbacks for calculations:**
+```tsx
+// ❌ CRASHES if duration is undefined
+const width = (segment.duration / total) * 100;
+
+// ✅ SAFE with fallback
+const width = ((segment.duration ?? 0) / (total || 1)) * 100;
+```
+
+---
+
+## Troubleshooting Decision Trees
+
+### Upload Fails with CORS Error
+```
+CORS Error on Upload
+│
+├─→ Step 1: Check frontend port
+│   ├─→ Port is 3000 or 3002? → Go to Step 2
+│   └─→ Port is 3005/5173/other? → RESTART ON PORT 3000 ✅
+│
+├─→ Step 2: Check AWS credentials
+│   ├─→ backend/.env has valid AWS keys? → Go to Step 3
+│   └─→ Missing/invalid keys? → Fix credentials ✅
+│
+└─→ Step 3: Check S3 bucket
+    ├─→ Run: aws s3 ls s3://easyedit-videos
+    └─→ Bucket exists and accessible? → Check backend logs for specific error
+
+❌ WRONG FIX: Changing S3 CORS to allow more origins
+✅ RIGHT FIX: Use port 3000
+```
+
+### Video Not Playing
+```
+Video Not Playing
+│
+├─→ Console shows "api.X is not a function"?
+│   └─→ Check api.ts for correct function name
+│       └─→ Use api.getVideoJobStatus() not api.checkVideoStatus()
+│
+├─→ Console shows "No video URL available"?
+│   ├─→ Check response from api.getVideoJobStatus()
+│   ├─→ Is proxy_url present? → Test URL in browser
+│   └─→ proxy_url is null? → Check backend video-status endpoint
+│
+├─→ Video URL exists but won't load?
+│   ├─→ Test URL directly in browser
+│   ├─→ Check if S3 presigned URL expired (24hr limit)
+│   └─→ Check for CORS errors on video request
+│
+└─→ No errors but blank player?
+    └─→ Check video element has src attribute in DevTools
+```
+
+### Timestamps Showing 0.0s or undefined
+```
+Timestamps Wrong
+│
+├─→ Step 1: Log raw segment data
+│   └─→ console.log('Segment:', segments[0])
+│
+├─→ Step 2: Check property names
+│   ├─→ Has "start"/"end"? → Need normalization (seg.start_time ?? seg.start)
+│   ├─→ Has "start_time"/"end_time"? → Check values aren't 0
+│   └─→ Properties missing? → Check backend response
+│
+└─→ Step 3: Add normalization layer
+    └─→ See "Data Structure Contracts" section above
+```
+
+### Component Crashes with TypeError
+```
+TypeError: Cannot read property 'X' of undefined
+│
+├─→ Identify which value is undefined
+│   └─→ Check the line number in error
+│
+├─→ Add null safety
+│   ├─→ For objects: value?.property
+│   ├─→ For defaults: value ?? defaultValue
+│   └─→ For arrays: array?.map() or (array || []).map()
+│
+└─→ Add loading check
+    └─→ if (!data) return <Loading />
+```
+
+---
+
+## Common Mistakes to Avoid
+
+### ❌ DON'T: Change S3 CORS for port issues
+**Symptom:** Upload fails with CORS error on port 3005
+**Wrong Fix:** Update S3 CORS to allow port 3005 or use wildcard `["*"]`
+**Right Fix:** Restart frontend on port 3000
+
+### ❌ DON'T: Guess API function names
+**Symptom:** Need to fetch video status
+**Wrong:** `api.checkVideoStatus(jobId)` - guessing the name
+**Right:** Check `api.ts` for actual function → `api.getVideoJobStatus(jobId)`
+
+### ❌ DON'T: Assume backend/frontend property names match
+**Symptom:** Timestamps showing 0.0s
+**Wrong:** Assume `segment.start_time` exists because frontend uses it
+**Right:** Check actual API response, add normalization layer
+
+### ❌ DON'T: Add local FFmpeg processing
+**Symptom:** Need to extract audio or process video
+**Wrong:** `subprocess.run(['ffmpeg', '-i', video, ...])`
+**Right:** Use Replicate fofr/toolkit or other cloud service
+
+### ❌ DON'T: Skip null safety on numeric operations
+**Symptom:** Component crashes with "Cannot read property 'toFixed' of undefined"
+**Wrong:** `segment.start_time.toFixed(2)`
+**Right:** `(segment.start_time ?? 0).toFixed(2)`
+
+### ❌ DON'T: Ignore TypeScript errors about missing properties
+**Symptom:** TypeScript says property might be undefined
+**Wrong:** Ignore with `// @ts-ignore`
+**Right:** Add proper null checks or default values
+
+---
+
+## Pre-Development Checklist
+
+**Before starting any development work, verify:**
+
+- [ ] Backend running on port 5000: `python app.py`
+- [ ] Frontend running on port 3000: `npm run dev` (check terminal output!)
+- [ ] AWS credentials configured in `backend/.env`
+- [ ] Replicate API token set in `backend/.env`
+- [ ] Can access S3 bucket: `aws s3 ls s3://easyedit-videos`
+
+**Before making API calls in frontend, verify:**
+
+- [ ] Function exists in `frontend/src/services/api.ts`
+- [ ] You're using the exact function name (case-sensitive)
+- [ ] You understand the response structure
+
+**Before displaying data from API, verify:**
+
+- [ ] You've logged the raw response to see actual structure
+- [ ] Property names match what component expects (or add normalization)
+- [ ] Null safety added for all `.toFixed()`, calculations, and property access
+
+---
+
+## Quick Reference Card
+
+| What | Correct | Wrong |
+|------|---------|-------|
+| Frontend port | 3000 | 3005, 5173, any other |
+| Video status function | `api.getVideoJobStatus()` | `api.checkVideoStatus()` |
+| Timestamp property (backend) | `start`, `end` | - |
+| Timestamp property (frontend) | `start_time`, `end_time` | - |
+| Video processing | Replicate cloud | Local FFmpeg |
+| S3 bucket region | `eu-north-1` | `us-east-1` |
+| Null safety | `(value ?? 0).toFixed()` | `value.toFixed()` |
+
+---
+
 ### Running the Application
 
 #### Development Mode
@@ -148,13 +455,19 @@ LOG_LEVEL=INFO
 cd backend
 python app.py
 
-# Terminal 2 - Frontend
+# Terminal 2 - Frontend (⚠️ MUST be port 3000)
 cd frontend
-npm run dev
+npm run dev  # Configured to use port 3000
+
+# If port 3000 is busy, kill the process first:
+# Windows: netstat -ano | findstr :3000 → taskkill /PID <pid> /F
+# Mac/Linux: lsof -ti:3000 | xargs kill -9
+
+# ❌ NEVER use other ports (3005, 5173, etc.) - S3 CORS will block uploads
 ```
 
 Backend runs on: `http://localhost:5000`
-Frontend runs on: `http://localhost:5173`
+Frontend runs on: `http://localhost:3000`  ⚠️ MUST be port 3000 (S3 CORS requirement)
 
 ---
 
@@ -316,8 +629,8 @@ frontend/
 |---------|-----------|------|
 | AWS S3 | 300 PUT requests | $0.0015 |
 | Replicate Whisper | 2hr transcription | ~$0.08 |
-| Replicate Audio Extract | Audio extraction | ~$0.02 |
-| **Total (Basic)** | | **~$0.10** |
+| fofr/toolkit | Audio extraction (FFmpeg, CPU) | ~$0.0003 |
+| **Total (Basic)** | | **~$0.082** |
 
 **With Motion Graphics (5 segments):**
 - Nano Banana Pro (10 frames): ~$0.10
